@@ -1,0 +1,8 @@
+.next
+node_modules
+.vercel
+coverage
+dist
+.playwright-cli
+*.log
+.env*.local
