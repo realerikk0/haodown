@@ -23,6 +23,14 @@ export const DOUYIN_LIMITATIONS = [
   "Signed media URLs are short-lived and must be refreshed when they expire.",
 ];
 
+export const DOUYIN_WEB_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36";
+
+export const DOUYIN_WEB_REFERER = "https://www.douyin.com/";
+
+export const DOUYIN_WEB_ACCEPT_LANGUAGE =
+  "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2";
+
 export function isDouyinHost(hostname: string): boolean {
   return (
     DOUYIN_HOSTS.includes(hostname) ||

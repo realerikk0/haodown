@@ -2,8 +2,16 @@ import { ApiError } from "@/lib/errors";
 import { withBrowserPage } from "@/lib/browser";
 import type { ExtractSuccessResult, VideoFormat } from "@/lib/models";
 import {
+  buildDouyinDetailParams,
+  buildDouyinFalseMsToken,
+  createDouyinABogus,
+} from "@/lib/providers/douyin/abogus";
+import {
   DOUYIN_CAPABILITIES,
   DOUYIN_LIMITATIONS,
+  DOUYIN_WEB_ACCEPT_LANGUAGE,
+  DOUYIN_WEB_REFERER,
+  DOUYIN_WEB_USER_AGENT,
 } from "@/lib/providers/douyin/shared";
 import type { ExtractionContext } from "@/lib/providers/types";
 
@@ -59,6 +67,11 @@ interface MobileShareVideoPayload {
   playwmUrl: string | null;
   awemeDetail: RawAwemeDetail | null;
 }
+
+const DOUYIN_WEB_DETAIL_ENDPOINT =
+  "https://www.douyin.com/aweme/v1/web/aweme/detail/";
+
+const DOUYIN_TTWID_ENDPOINT = "https://ttwid.bytedance.com/ttwid/union/register/";
 
 function isNavigationTimeoutError(error: unknown) {
   return (
@@ -190,6 +203,162 @@ function fallbackFormatsFromMediaUrls(mediaUrls: string[]): VideoFormat[] {
 
 function buildDouyinShareVideoUrl(id: string) {
   return `https://www.iesdouyin.com/share/video/${id}/`;
+}
+
+function isResolvableDouyinPlayUrl(url: string | null | undefined) {
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.hostname.endsWith(".douyin.com") ||
+        parsed.hostname.endsWith(".iesdouyin.com") ||
+        parsed.hostname === "douyin.com" ||
+        parsed.hostname === "iesdouyin.com") &&
+      parsed.pathname.includes("/aweme/v1/play/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function upsertCookie(cookieJar: Map<string, string>, cookie: string) {
+  const [nameValue] = cookie.split(";");
+  if (!nameValue) {
+    return;
+  }
+
+  const separatorIndex = nameValue.indexOf("=");
+  if (separatorIndex <= 0) {
+    return;
+  }
+
+  const name = nameValue.slice(0, separatorIndex).trim();
+  const value = nameValue.slice(separatorIndex + 1).trim();
+  if (!name || !value) {
+    return;
+  }
+
+  cookieJar.set(name, value);
+}
+
+function getResponseSetCookies(headers: Headers) {
+  const cookieHeaders = headers as Headers & {
+    getSetCookie?: () => string[];
+  };
+
+  if (typeof cookieHeaders.getSetCookie === "function") {
+    return cookieHeaders.getSetCookie();
+  }
+
+  const fallback = headers.get("set-cookie");
+  return fallback ? [fallback] : [];
+}
+
+async function collectDouyinWebCookies(canonicalUrl: string) {
+  const cookieJar = new Map<string, string>();
+
+  const ttwidResponse = await fetch(DOUYIN_TTWID_ENDPOINT, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "content-type": "application/json",
+      "user-agent": DOUYIN_WEB_USER_AGENT,
+      referer: DOUYIN_WEB_REFERER,
+    },
+    body: JSON.stringify({
+      region: "cn",
+      aid: 1768,
+      needFid: false,
+      service: "www.ixigua.com",
+      migrate_info: {
+        ticket: "",
+        source: "node",
+      },
+      cbUrlProtocol: "https",
+      union: true,
+    }),
+  }).catch(() => null);
+
+  if (ttwidResponse) {
+    for (const cookie of getResponseSetCookies(ttwidResponse.headers)) {
+      upsertCookie(cookieJar, cookie);
+    }
+  }
+
+  const seedResponse = await fetch(canonicalUrl, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      "accept-language": DOUYIN_WEB_ACCEPT_LANGUAGE,
+      "user-agent": DOUYIN_WEB_USER_AGENT,
+      referer: DOUYIN_WEB_REFERER,
+      ...(cookieJar.size > 0
+        ? {
+            cookie: [...cookieJar.entries()]
+              .map(([name, value]) => `${name}=${value}`)
+              .join("; "),
+          }
+        : {}),
+    },
+  }).catch(() => null);
+
+  if (seedResponse) {
+    for (const cookie of getResponseSetCookies(seedResponse.headers)) {
+      upsertCookie(cookieJar, cookie);
+    }
+  }
+
+  return [...cookieJar.entries()]
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
+}
+
+async function fetchDouyinWebDetail(
+  context: ExtractionContext,
+): Promise<RawDetailResponse | null> {
+  const cookieHeader = await collectDouyinWebCookies(context.canonicalUrl);
+  const msTokenCandidates = ["", buildDouyinFalseMsToken()];
+
+  for (const msToken of msTokenCandidates) {
+    const params = buildDouyinDetailParams(context.id, msToken);
+    const aBogus = createDouyinABogus(params);
+    const detailUrl = `${DOUYIN_WEB_DETAIL_ENDPOINT}?${params.toString()}&a_bogus=${aBogus}`;
+
+    const response = await fetch(detailUrl, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "accept-language": DOUYIN_WEB_ACCEPT_LANGUAGE,
+        referer: DOUYIN_WEB_REFERER,
+        "user-agent": DOUYIN_WEB_USER_AGENT,
+        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+      },
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      continue;
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+      continue;
+    }
+
+    try {
+      const payload = JSON.parse(text) as RawDetailResponse;
+      if (payload.aweme_detail?.aweme_id) {
+        return payload;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | null {
@@ -451,6 +620,57 @@ async function buildFormatsFromPlaywmUrl(
   });
 }
 
+async function resolveDouyinFormatsToDirectUrls(
+  formats: VideoFormat[],
+  referer: string,
+): Promise<VideoFormat[]> {
+  const hydrated: VideoFormat[] = [];
+  const seen = new Set<string>();
+
+  for (const format of formats) {
+    let resolvedUrl = format.url;
+
+    if (isResolvableDouyinPlayUrl(resolvedUrl)) {
+      const redirectUrl = await resolveDouyinPlayRedirect(resolvedUrl, referer);
+      if (redirectUrl) {
+        resolvedUrl = redirectUrl;
+      }
+    }
+
+    if (!isPlayableDouyinVideoUrl(resolvedUrl)) {
+      continue;
+    }
+
+    const dedupeKey = resolvedUrl.split("?")[0];
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    hydrated.push({
+      ...format,
+      url: resolvedUrl,
+      bitrate: format.bitrate ?? extractNumericQueryParam(resolvedUrl, "br"),
+      watermark: "none",
+    });
+  }
+
+  return hydrated.sort((left, right) => {
+    const heightDelta = (right.height ?? 0) - (left.height ?? 0);
+    if (heightDelta !== 0) {
+      return heightDelta;
+    }
+
+    const definitionDelta =
+      extractDefinitionRank(right.definition) - extractDefinitionRank(left.definition);
+    if (definitionDelta !== 0) {
+      return definitionDelta;
+    }
+
+    return (right.bitrate ?? 0) - (left.bitrate ?? 0);
+  });
+}
+
 async function extractDouyinVideoFromMobileShare(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
@@ -598,42 +818,44 @@ async function collectVideoPagePayload(
 async function extractDouyinVideoOnce(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
-  const payload = await collectVideoPagePayload(context.canonicalUrl);
-  const awemeDetail = payload.detail?.aweme_detail;
-  const video = awemeDetail?.video;
+  const detail = await fetchDouyinWebDetail(context);
+  const awemeDetail = detail?.aweme_detail;
+  const payload = awemeDetail ? null : await collectVideoPagePayload(context.canonicalUrl);
+  const browserDetail = payload?.detail?.aweme_detail;
+  const activeAwemeDetail = awemeDetail ?? browserDetail;
+  const video = activeAwemeDetail?.video;
 
-  const formats = mapDouyinVideoFormats(video?.bit_rate ?? [], video?.ratio);
+  let formats = await resolveDouyinFormatsToDirectUrls(
+    mapDouyinVideoFormats(video?.bit_rate ?? [], video?.ratio),
+    context.canonicalUrl,
+  );
 
   if (formats.length === 0) {
-    const fallbackUrl =
+    const fallbackPlayUrl =
       firstUrl(video?.play_addr_h264) ??
       firstUrl(video?.play_addr);
 
-    if (isPlayableDouyinVideoUrl(fallbackUrl)) {
-      formats.push({
-        definition: extractDefinition(undefined, video?.play_addr_h264?.height, video?.ratio),
-        width: video?.play_addr_h264?.width ?? video?.play_addr?.width ?? null,
-        height: video?.play_addr_h264?.height ?? video?.play_addr?.height ?? null,
-        bitrate: null,
-        url: fallbackUrl!,
-        watermark: "none",
-      });
+    if (fallbackPlayUrl) {
+      formats = await buildFormatsFromPlaywmUrl(fallbackPlayUrl, context.canonicalUrl);
     }
   }
 
-  if (formats.length === 0) {
+  if (formats.length === 0 && payload) {
     formats.push(...fallbackFormatsFromMediaUrls(payload.mediaUrls));
   }
 
-  if (formats.length === 0 && isPlayableDouyinVideoUrl(payload.currentSrc)) {
-    formats.push({
-      definition: extractDefinition(undefined, null, video?.ratio),
-      width: null,
-      height: null,
-      bitrate: extractNumericQueryParam(payload.currentSrc!, "br"),
-      url: payload.currentSrc!,
-      watermark: "none",
-    });
+  if (formats.length === 0 && payload && isPlayableDouyinVideoUrl(payload.currentSrc)) {
+    const currentSrc = payload.currentSrc;
+    if (currentSrc) {
+      formats.push({
+        definition: extractDefinition(undefined, null, video?.ratio),
+        width: null,
+        height: null,
+        bitrate: extractNumericQueryParam(currentSrc, "br"),
+        url: currentSrc,
+        watermark: "none",
+      });
+    }
   }
 
   if (formats.length === 0) {
@@ -649,15 +871,16 @@ async function extractDouyinVideoOnce(
     firstUrl(video?.origin_cover) ??
     firstUrl(video?.cover) ??
     firstUrl(video?.dynamic_cover) ??
-    payload.poster;
+    payload?.poster ??
+    null;
 
   return {
     ok: true,
     platform: "douyin",
     contentType: "video",
     canonicalUrl: context.canonicalUrl,
-    title: sanitizeTitle(awemeDetail?.desc || payload.title),
-    id: awemeDetail?.aweme_id || context.id,
+    title: sanitizeTitle(activeAwemeDetail?.desc || payload?.title || "Untitled Douyin video"),
+    id: activeAwemeDetail?.aweme_id || context.id,
     capabilities: DOUYIN_CAPABILITIES,
     limitations: [
       ...DOUYIN_LIMITATIONS,
@@ -673,7 +896,11 @@ async function extractDouyinVideoOnce(
     },
     platformMeta: {
       source: "douyin",
-      extractionMode: awemeDetail ? "aweme-detail" : "dom-video",
+      extractionMode: awemeDetail
+        ? "web-detail-api"
+        : browserDetail
+          ? "aweme-detail"
+          : "dom-video",
       ratio: video?.ratio ?? null,
     },
   };
