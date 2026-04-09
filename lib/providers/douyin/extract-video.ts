@@ -53,6 +53,13 @@ interface VideoPagePayload {
   mediaUrls: string[];
 }
 
+function isNavigationTimeoutError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message.toLowerCase().includes("navigation timeout")
+  );
+}
+
 function sanitizeTitle(title: string) {
   return title.replace(/\s*-\s*抖音$/, "").trim();
 }
@@ -191,7 +198,16 @@ async function collectVideoPagePayload(
       )
       .catch(() => null);
 
-    await page.goto(canonicalUrl, { waitUntil: "domcontentloaded" });
+    try {
+      await page.goto(canonicalUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 18_000,
+      });
+    } catch (error) {
+      if (!isNavigationTimeoutError(error)) {
+        throw error;
+      }
+    }
 
     await page
       .waitForFunction(
