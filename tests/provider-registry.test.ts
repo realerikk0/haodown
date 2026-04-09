@@ -8,12 +8,23 @@ describe("provider registry", () => {
     expect(provider.descriptor.platform).toBe("toutiao");
   });
 
+  it("matches Douyin URLs", () => {
+    const provider = getProviderForUrl(new URL("https://v.douyin.com/test/"));
+    expect(provider.descriptor.platform).toBe("douyin");
+  });
+
   it("lists enabled platforms", () => {
-    expect(listPlatforms()).toEqual([
-      expect.objectContaining({
-        platform: "toutiao",
-        enabled: true,
-      }),
-    ]);
+    expect(listPlatforms()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          platform: "toutiao",
+          enabled: true,
+        }),
+        expect.objectContaining({
+          platform: "douyin",
+          enabled: true,
+        }),
+      ]),
+    );
   });
 });

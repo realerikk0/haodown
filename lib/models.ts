@@ -1,4 +1,4 @@
-export type SupportedPlatform = "toutiao";
+export type SupportedPlatform = "toutiao" | "douyin";
 
 export type ContentType = "video" | "gallery";
 
