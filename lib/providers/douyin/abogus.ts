@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sm3 } from "sm-crypto";
 
 const A_BOGUS_STRINGS = {
   s4: "Dkdpgh2ZmsQB80/MfvV36XI1R45-WUAlEixNLwoqYTOPuzKFjJnry79HbGcaStCe",
@@ -258,8 +258,11 @@ function sm3ToArray(data: string | number[]) {
     typeof data === "string"
       ? Buffer.from(data, "utf8")
       : Buffer.from(Uint8Array.from(data));
-  const digest = createHash("sm3").update(buffer).digest();
-  return Array.from(digest.values());
+  const digestHex = sm3(Array.from(buffer.values()));
+  return Array.from(
+    { length: digestHex.length / 2 },
+    (_, index) => Number.parseInt(digestHex.slice(index * 2, index * 2 + 2), 16),
+  );
 }
 
 function generateResult(source: string) {
@@ -520,5 +523,5 @@ export function buildDouyinDetailParams(awemeId: string, msToken = "") {
 }
 
 export function debugDouyinSm3Available() {
-  return createHash("sm3").update("ok").digest("hex").length > 0;
+  return sm3("ok").length > 0;
 }
