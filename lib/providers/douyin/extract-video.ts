@@ -192,6 +192,37 @@ function buildDouyinShareVideoUrl(id: string) {
   return `https://www.iesdouyin.com/share/video/${id}/`;
 }
 
+function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | null {
+  const routerDataMatch = html.match(
+    /<script[^>]*>\s*window\._ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/i,
+  );
+
+  if (!routerDataMatch?.[1]) {
+    return null;
+  }
+
+  try {
+    const routerData = JSON.parse(routerDataMatch[1]) as {
+      loaderData?: Record<
+        string,
+        {
+          videoInfoRes?: {
+            item_list?: RawAwemeDetail[];
+          };
+        }
+      >;
+    };
+
+    return (
+      Object.values(routerData.loaderData ?? {})
+        .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
+        .find((item) => item.aweme_id) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function collectMobileShareVideoPayload(
   shareUrl: string,
 ): Promise<MobileShareVideoPayload> {
@@ -209,47 +240,21 @@ async function collectMobileShareVideoPayload(
   }
 
   const html = await response.text();
-  const routerDataMatch = html.match(
-    /<script[^>]*>\s*window\._ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/i,
-  );
+  const awemeDetail = extractDouyinAwemeDetailFromShareHtml(html);
 
-  if (!routerDataMatch?.[1]) {
+  if (!awemeDetail) {
     return collectMobileShareVideoPayloadFromBrowser(shareUrl);
   }
 
-  try {
-    const routerData = JSON.parse(routerDataMatch[1]) as {
-      loaderData?: Record<
-        string,
-        {
-          videoInfoRes?: {
-            item_list?: RawAwemeDetail[];
-          };
-        }
-      >;
-    };
-
-    const awemeDetail =
-      Object.values(routerData.loaderData ?? {})
-        .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
-        .find((item) => item.aweme_id) ?? null;
-
-    if (!awemeDetail) {
-      return collectMobileShareVideoPayloadFromBrowser(shareUrl);
-    }
-
-    return {
-      title: awemeDetail.desc || "Untitled Douyin video",
-      poster:
-        firstUrl(awemeDetail.video?.origin_cover) ??
-        firstUrl(awemeDetail.video?.cover) ??
-        firstUrl(awemeDetail.video?.dynamic_cover),
-      playwmUrl: firstUrl(awemeDetail.video?.play_addr),
-      awemeDetail,
-    };
-  } catch {
-    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
-  }
+  return {
+    title: awemeDetail.desc || "Untitled Douyin video",
+    poster:
+      firstUrl(awemeDetail.video?.origin_cover) ??
+      firstUrl(awemeDetail.video?.cover) ??
+      firstUrl(awemeDetail.video?.dynamic_cover),
+    playwmUrl: firstUrl(awemeDetail.video?.play_addr),
+    awemeDetail,
+  };
 }
 
 async function collectMobileShareVideoPayloadFromBrowser(
@@ -271,6 +276,20 @@ async function collectMobileShareVideoPayloadFromBrowser(
       waitUntil: "domcontentloaded",
       timeout: 18_000,
     });
+
+    const pageHtml = await page.content();
+    const shareAwemeDetail = extractDouyinAwemeDetailFromShareHtml(pageHtml);
+    if (shareAwemeDetail) {
+      return {
+        title: shareAwemeDetail.desc || "Untitled Douyin video",
+        poster:
+          firstUrl(shareAwemeDetail.video?.origin_cover) ??
+          firstUrl(shareAwemeDetail.video?.cover) ??
+          firstUrl(shareAwemeDetail.video?.dynamic_cover),
+        playwmUrl: firstUrl(shareAwemeDetail.video?.play_addr),
+        awemeDetail: shareAwemeDetail,
+      };
+    }
 
     await page.waitForFunction(
       () => {
