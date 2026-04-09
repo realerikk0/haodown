@@ -53,6 +53,12 @@ interface VideoPagePayload {
   mediaUrls: string[];
 }
 
+interface MobileShareVideoPayload {
+  title: string;
+  poster: string | null;
+  playwmUrl: string | null;
+}
+
 function isNavigationTimeoutError(error: unknown) {
   return (
     error instanceof Error &&
@@ -80,6 +86,11 @@ function extractNumericQueryParam(url: string, key: string) {
   } catch {
     return null;
   }
+}
+
+function extractDefinitionRank(definition: string) {
+  const match = definition.match(/(\d{3,4})p/i);
+  return match ? Number.parseInt(match[1], 10) : 0;
 }
 
 function isPlayableDouyinVideoUrl(url: string | null | undefined) {
@@ -174,6 +185,185 @@ function fallbackFormatsFromMediaUrls(mediaUrls: string[]): VideoFormat[] {
   }
 
   return formats.sort((left, right) => (right.bitrate ?? 0) - (left.bitrate ?? 0));
+}
+
+function buildDouyinShareVideoUrl(id: string) {
+  return `https://www.iesdouyin.com/share/video/${id}/`;
+}
+
+async function collectMobileShareVideoPayload(
+  shareUrl: string,
+): Promise<MobileShareVideoPayload> {
+  return withBrowserPage(async (page) => {
+    await page.setViewport({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+    });
+    await page.setUserAgent(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    );
+
+    await page.goto(shareUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 18_000,
+    });
+
+    await page.waitForFunction(
+      () => {
+        const video = document.querySelector("video");
+        return (
+          video instanceof HTMLVideoElement && Boolean(video.currentSrc || video.src)
+        );
+      },
+      { timeout: 12_000 },
+    );
+
+    return page.evaluate(() => {
+      const video = document.querySelector("video");
+      const playwmUrl =
+        video instanceof HTMLVideoElement ? video.currentSrc || video.src : null;
+      const poster =
+        document.querySelector('meta[property="og:image"]')?.getAttribute("content") ??
+        (video instanceof HTMLVideoElement ? video.poster || null : null);
+
+      return {
+        title: document.title || "Untitled Douyin video",
+        poster,
+        playwmUrl,
+      };
+    });
+  });
+}
+
+async function resolveDouyinPlayRedirect(
+  url: string,
+  referer: string,
+): Promise<string | null> {
+  const response = await fetch(url, {
+    method: "GET",
+    redirect: "manual",
+    cache: "no-store",
+    headers: {
+      referer,
+      "user-agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    },
+  });
+
+  if (response.status >= 300 && response.status < 400) {
+    return response.headers.get("location");
+  }
+
+  return null;
+}
+
+async function buildFormatsFromPlaywmUrl(
+  playwmUrl: string,
+  referer: string,
+): Promise<VideoFormat[]> {
+  const parsed = new URL(playwmUrl);
+  const videoId = parsed.searchParams.get("video_id");
+  const currentRatio = parsed.searchParams.get("ratio") ?? "720p";
+  const line = parsed.searchParams.get("line") ?? "0";
+
+  if (!videoId) {
+    return [];
+  }
+
+  const candidateDefinitions = Array.from(
+    new Set(["1080p", currentRatio, "720p", "540p"]),
+  );
+
+  const formats: VideoFormat[] = [];
+  const seen = new Set<string>();
+
+  for (const definition of candidateDefinitions) {
+    const playUrl = new URL("https://www.iesdouyin.com/aweme/v1/play/");
+    playUrl.searchParams.set("video_id", videoId);
+    playUrl.searchParams.set("ratio", definition);
+    playUrl.searchParams.set("line", line);
+
+    const resolvedUrl = await resolveDouyinPlayRedirect(playUrl.toString(), referer);
+    if (!resolvedUrl || !isPlayableDouyinVideoUrl(resolvedUrl)) {
+      continue;
+    }
+
+    const dedupeKey = resolvedUrl.split("?")[0];
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    formats.push({
+      definition,
+      width: null,
+      height: null,
+      bitrate: extractNumericQueryParam(resolvedUrl, "br"),
+      url: resolvedUrl,
+      watermark: "none",
+    });
+  }
+
+  return formats.sort((left, right) => {
+    const definitionDelta =
+      extractDefinitionRank(right.definition) - extractDefinitionRank(left.definition);
+    if (definitionDelta !== 0) {
+      return definitionDelta;
+    }
+
+    return (right.bitrate ?? 0) - (left.bitrate ?? 0);
+  });
+}
+
+async function extractDouyinVideoFromMobileShare(
+  context: ExtractionContext,
+): Promise<ExtractSuccessResult> {
+  const shareUrl = buildDouyinShareVideoUrl(context.id);
+  const payload = await collectMobileShareVideoPayload(shareUrl);
+  const formats =
+    payload.playwmUrl !== null
+      ? await buildFormatsFromPlaywmUrl(payload.playwmUrl, shareUrl)
+      : [];
+
+  if (formats.length === 0) {
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin mobile share video payload could not be extracted.",
+      502,
+    );
+  }
+
+  const best = formats[0];
+
+  return {
+    ok: true,
+    platform: "douyin",
+    contentType: "video",
+    canonicalUrl: context.canonicalUrl,
+    title: sanitizeTitle(payload.title),
+    id: context.id,
+    capabilities: DOUYIN_CAPABILITIES,
+    limitations: [
+      ...DOUYIN_LIMITATIONS,
+      "Douyin video links are signed and may require a fresh extract before downloading later.",
+    ],
+    video: {
+      best,
+      formats,
+      watermark: best.watermark,
+      quality: best.definition,
+      durationSeconds: null,
+      poster: payload.poster,
+    },
+    platformMeta: {
+      source: "douyin",
+      extractionMode: "mobile-share-play",
+      shareUrl,
+    },
+  };
 }
 
 async function collectVideoPagePayload(
@@ -358,14 +548,21 @@ export async function extractDouyinVideo(
 ): Promise<ExtractSuccessResult> {
   let lastError: unknown = null;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      return await extractDouyinVideoOnce(context);
-    } catch (error) {
-      lastError = error;
-      if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
-        throw error;
-      }
+  try {
+    return await extractDouyinVideoOnce(context);
+  } catch (error) {
+    lastError = error;
+    if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
+      throw error;
+    }
+  }
+
+  try {
+    return await extractDouyinVideoFromMobileShare(context);
+  } catch (error) {
+    lastError = error;
+    if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
+      throw error;
     }
   }
 
