@@ -60,9 +60,33 @@
 
 .heroLead {
   max-width: 42ch;
-  margin: 0 0 28px;
+  margin: 0 0 18px;
   color: rgba(247, 251, 250, 0.78);
   font-size: 17px;
+}
+
+.platformRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.platformLabel {
+  color: rgba(247, 251, 250, 0.72);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.platformPill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(247, 251, 250, 0.92);
+  font-size: 13px;
 }
 
 .heroMeta {

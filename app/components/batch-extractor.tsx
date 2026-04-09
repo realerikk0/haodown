@@ -203,6 +203,11 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
             <p className={styles.heroLead}>
               把分享文案、短链或长链批量贴进来，haodown 会自动识别内容，并整理出可直接使用的视频链接和原图地址。
             </p>
+            <div className={styles.platformRow}>
+              <span className={styles.platformLabel}>支持平台</span>
+              <span className={styles.platformPill}>今日头条</span>
+              <span className={styles.platformPill}>抖音</span>
+            </div>
             <div className={styles.heroMeta}>
               <span className={styles.metaPill}>支持整段分享文案识别</span>
               <span className={styles.metaPill}>批量解析后统一回显</span>
