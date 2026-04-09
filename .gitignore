@@ -6,3 +6,7 @@ dist
 .playwright-cli
 *.log
 .env*.local
+.env.supabase
+.DS_Store
+supabase/.temp
+supabase/.DS_Store

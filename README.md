@@ -8,7 +8,8 @@
 - `GET /api/platforms`
 - Supabase Auth 登录 / 注册
 - 首页登录态展示专属 token
-- 游客模式最多解析 5 条
+- 游客模式每天最多解析 2 条
+- 登录用户每天默认可解析 5 条，超出后可消耗点数
 
 ## 环境变量
 
@@ -30,9 +31,12 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 ## Supabase SQL
 
+基础认证和数据表迁移：
+
 在 Supabase SQL Editor 里执行：
 
 - [supabase/migrations/20260408_auth_and_usage.sql](/Volumes/Data/CodexProjects/VideoDl/supabase/migrations/20260408_auth_and_usage.sql)
+- [supabase/migrations/20260408_daily_request_quota.sql](/Volumes/Data/CodexProjects/VideoDl/supabase/migrations/20260408_daily_request_quota.sql)
 
 这会创建：
 
@@ -41,6 +45,44 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 - 注册后自动补 profile 的 trigger
 - `api_token` 生成函数
 - 基础 RLS policy
+- 每日额度与点数扣减函数
+
+## 项目级 Supabase 迁移配置
+
+如果你的 Supabase 项目不是当前 CLI 登录账号创建的，不建议继续依赖 `supabase link`。仓库里已经补了一套项目级迁移方案，只依赖数据库连接信息，不依赖某个个人账号的 Supabase Dashboard 权限。
+
+先复制配置模板：
+
+```bash
+cp .env.supabase.example .env.supabase.local
+```
+
+然后至少填写下面其中一种：
+
+```bash
+SUPABASE_DB_URL=postgresql://postgres:your-password@db.xdiayrcdgomimekmgueg.supabase.co:5432/postgres?sslmode=require
+```
+
+或者：
+
+```bash
+SUPABASE_PROJECT_REF=xdiayrcdgomimekmgueg
+SUPABASE_DB_PASSWORD=your-database-password
+```
+
+可用命令：
+
+```bash
+npm run supabase:push:remote
+npm run supabase:push:remote:dry
+npm run supabase:apply:quota
+```
+
+其中：
+
+- `supabase:push:remote`：按仓库里的 migration 顺序推送全部未执行迁移
+- `supabase:push:remote:dry`：只做预演，不真正执行
+- `supabase:apply:quota`：只执行原子配额 migration
 
 ## Auth 流程
 

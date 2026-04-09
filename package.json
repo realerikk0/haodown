@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "supabase:push:remote": "node scripts/supabase-remote-migrations.mjs push",
+    "supabase:push:remote:dry": "node scripts/supabase-remote-migrations.mjs push --dry-run",
+    "supabase:apply:quota": "node scripts/supabase-remote-migrations.mjs apply 20260408_daily_request_quota.sql"
   },
   "dependencies": {
     "@sparticuz/chromium": "^138.0.2",
