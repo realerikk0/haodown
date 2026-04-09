@@ -86,6 +86,10 @@ function isNavigationTimeoutError(error: unknown) {
   );
 }
 
+function isExtractFailedApiError(error: unknown) {
+  return error instanceof ApiError && error.code === "EXTRACT_FAILED";
+}
+
 function sanitizeTitle(title: string) {
   return title.replace(/\s*-\s*抖音$/, "").trim();
 }
@@ -122,6 +126,10 @@ function isPlayableDouyinVideoUrl(url: string | null | undefined) {
     url.includes("douyinvod.com") &&
     (url.includes("mime_type=video_mp4") || url.includes("/video/tos/"))
   );
+}
+
+function isDownloadableDouyinVideoUrl(url: string | null | undefined) {
+  return isPlayableDouyinVideoUrl(url) || isResolvableDouyinPlayUrl(url);
 }
 
 function extractDefinition(gearName?: string, height?: number | null, ratio?: string) {
@@ -446,6 +454,7 @@ async function fetchDouyinWebDetail(
 ): Promise<RawDetailResponse | null> {
   const cookieHeader = await collectDouyinWebCookies(context.canonicalUrl);
   const msTokenCandidates = ["", buildDouyinFalseMsToken()];
+  const attemptSummaries: Array<Record<string, unknown>> = [];
 
   for (const msToken of msTokenCandidates) {
     const params = buildDouyinDetailParams(context.id, msToken);
@@ -465,11 +474,24 @@ async function fetchDouyinWebDetail(
     }).catch(() => null);
 
     if (!response?.ok) {
+      attemptSummaries.push({
+        msToken: msToken ? "synthetic" : "empty",
+        ok: Boolean(response?.ok),
+        status: response?.status ?? null,
+        url: detailUrl,
+      });
       continue;
     }
 
     const text = await response.text();
     if (!text.trim()) {
+      attemptSummaries.push({
+        msToken: msToken ? "synthetic" : "empty",
+        ok: true,
+        status: response.status,
+        emptyBody: true,
+        url: detailUrl,
+      });
       continue;
     }
 
@@ -478,9 +500,38 @@ async function fetchDouyinWebDetail(
       if (payload.aweme_detail?.aweme_id) {
         return payload;
       }
+
+      attemptSummaries.push({
+        msToken: msToken ? "synthetic" : "empty",
+        ok: true,
+        status: response.status,
+        hasAwemeDetail: Boolean(payload.aweme_detail?.aweme_id),
+        bodyLength: text.length,
+        url: detailUrl,
+      });
     } catch {
+      attemptSummaries.push({
+        msToken: msToken ? "synthetic" : "empty",
+        ok: true,
+        status: response.status,
+        parseFailed: true,
+        bodyLength: text.length,
+        bodyStart: text.slice(0, 160),
+        url: detailUrl,
+      });
       continue;
     }
+  }
+
+  if (attemptSummaries.length > 0) {
+    console.error(
+      "[douyin:web-detail-failed]",
+      JSON.stringify({
+        canonicalUrl: context.canonicalUrl,
+        awemeId: context.id,
+        attempts: attemptSummaries,
+      }),
+    );
   }
 
   return null;
@@ -520,7 +571,7 @@ function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | n
 
     return (
       Object.values(routerData.loaderData ?? {})
-        .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
+        .flatMap((entry) => entry?.videoInfoRes?.item_list ?? [])
         .find((item) => item.aweme_id) ?? null
     );
   } catch {
@@ -558,9 +609,31 @@ async function collectMobileShareVideoPayload(
   const awemeDetail = extractDouyinAwemeDetailFromShareHtml(html);
 
   if (!awemeDetail) {
+    const debugSummary = [
+      `finalUrl=${response.url}`,
+      `len=${html.length}`,
+      `router=${html.includes("window._ROUTER_DATA") ? 1 : 0}`,
+      `itemList=${html.includes("\"item_list\"") ? 1 : 0}`,
+      `aweme=${html.includes("\"aweme_id\"") ? 1 : 0}`,
+      `play=${html.includes("\"play_addr\"") ? 1 : 0}`,
+    ].join(",");
+
+    console.error(
+      "[douyin:share-parse-failed]",
+      JSON.stringify({
+        shareUrl,
+        finalUrl: response.url,
+        bodyLength: html.length,
+        hasRouterData: html.includes("window._ROUTER_DATA"),
+        hasItemList: html.includes("\"item_list\""),
+        hasAwemeId: html.includes("\"aweme_id\""),
+        hasPlayAddr: html.includes("\"play_addr\""),
+        bodyStart: html.slice(0, 200),
+      }),
+    );
     throw new ApiError(
       "EXTRACT_FAILED",
-      "Douyin share payload could not be extracted.",
+      `Douyin share payload could not be extracted. ${debugSummary}`,
       502,
     );
   }
@@ -665,7 +738,7 @@ async function collectMobileShareVideoPayloadFromBrowser(
 
     await page.goto(shareUrl, {
       waitUntil: "domcontentloaded",
-      timeout: 18_000,
+      timeout: 10_000,
     });
 
     const pageHtml = await page.content();
@@ -699,7 +772,7 @@ async function collectMobileShareVideoPayloadFromBrowser(
             }
           | undefined;
         const hasRouterData = Object.values(routerData?.loaderData ?? {}).some(
-          (entry) => (entry.videoInfoRes?.item_list?.length ?? 0) > 0,
+          (entry) => (entry?.videoInfoRes?.item_list?.length ?? 0) > 0,
         );
 
         return (
@@ -708,10 +781,10 @@ async function collectMobileShareVideoPayloadFromBrowser(
           hasRouterData
         );
       },
-      { timeout: 12_000 },
-    );
+      { timeout: 4_000 },
+    ).catch(() => null);
 
-    return page.evaluate(() => {
+    const payload = await page.evaluate(() => {
       const video = document.querySelector("video");
       const routerData = (window as Window & { _ROUTER_DATA?: unknown })
         ._ROUTER_DATA as
@@ -738,7 +811,7 @@ async function collectMobileShareVideoPayloadFromBrowser(
         | undefined;
       const awemeDetail =
         Object.values(routerData?.loaderData ?? {})
-          .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
+          .flatMap((entry) => entry?.videoInfoRes?.item_list ?? [])
           .find((item) => item.aweme_id) ?? null;
       const playwmUrl =
         (video instanceof HTMLVideoElement ? video.currentSrc || video.src : null) ??
@@ -759,6 +832,32 @@ async function collectMobileShareVideoPayloadFromBrowser(
         awemeDetail,
       };
     });
+
+    if (payload.awemeDetail || payload.playwmUrl) {
+      return payload;
+    }
+
+    const hydratedHtml = await page.content();
+    const hydratedDetail = extractDouyinAwemeDetailFromShareHtml(hydratedHtml);
+
+    if (hydratedDetail) {
+      return {
+        title: hydratedDetail.desc || payload.title,
+        poster:
+          firstUrl(hydratedDetail.video?.origin_cover) ??
+          firstUrl(hydratedDetail.video?.cover) ??
+          firstUrl(hydratedDetail.video?.dynamic_cover) ??
+          payload.poster,
+        playwmUrl: firstUrl(hydratedDetail.video?.play_addr) ?? payload.playwmUrl,
+        awemeDetail: hydratedDetail,
+      };
+    }
+
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin mobile share browser payload could not be extracted.",
+      502,
+    );
   });
 }
 
@@ -766,19 +865,37 @@ async function resolveDouyinPlayRedirect(
   url: string,
   referer: string,
 ): Promise<string | null> {
+  const requestHeaders = {
+    referer,
+    range: "bytes=0-0",
+    "user-agent":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+  };
+
   const response = await fetch(url, {
     method: "GET",
     redirect: "manual",
     cache: "no-store",
-    headers: {
-      referer,
-      "user-agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-    },
+    headers: requestHeaders,
   });
 
   if (response.status >= 300 && response.status < 400) {
     return response.headers.get("location");
+  }
+
+  if (response.ok && isPlayableDouyinVideoUrl(response.url)) {
+    return response.url;
+  }
+
+  const followed = await fetch(url, {
+    method: "HEAD",
+    redirect: "follow",
+    cache: "no-store",
+    headers: requestHeaders,
+  }).catch(() => null);
+
+  if (followed?.ok && isPlayableDouyinVideoUrl(followed.url)) {
+    return followed.url;
   }
 
   return null;
@@ -811,11 +928,12 @@ async function buildFormatsFromPlaywmUrl(
     playUrl.searchParams.set("line", line);
 
     const resolvedUrl = await resolveDouyinPlayRedirect(playUrl.toString(), referer);
-    if (!resolvedUrl || !isPlayableDouyinVideoUrl(resolvedUrl)) {
-      continue;
-    }
+    const finalUrl =
+      resolvedUrl && isPlayableDouyinVideoUrl(resolvedUrl)
+        ? resolvedUrl
+        : playUrl.toString();
 
-    const dedupeKey = resolvedUrl.split("?")[0];
+    const dedupeKey = finalUrl.split("?")[0];
     if (seen.has(dedupeKey)) {
       continue;
     }
@@ -825,8 +943,8 @@ async function buildFormatsFromPlaywmUrl(
       definition,
       width: null,
       height: null,
-      bitrate: extractNumericQueryParam(resolvedUrl, "br"),
-      url: resolvedUrl,
+      bitrate: extractNumericQueryParam(finalUrl, "br"),
+      url: finalUrl,
       watermark: "none",
     });
   }
@@ -859,7 +977,7 @@ async function resolveDouyinFormatsToDirectUrls(
       }
     }
 
-    if (!isPlayableDouyinVideoUrl(resolvedUrl)) {
+    if (!isDownloadableDouyinVideoUrl(resolvedUrl)) {
       continue;
     }
 
@@ -939,6 +1057,61 @@ async function extractDouyinVideoFromMobileShare(
     platformMeta: {
       source: "douyin",
       extractionMode: awemeDetail ? "mobile-share-data" : "mobile-share-play",
+      shareUrl,
+    },
+  };
+}
+
+async function extractDouyinVideoFromMobileShareBrowser(
+  context: ExtractionContext,
+): Promise<ExtractSuccessResult> {
+  const shareUrl = buildDouyinShareVideoUrl(context.id);
+  const payload = await collectMobileShareVideoPayloadFromBrowser(shareUrl);
+  const fallbackPlayUrl =
+    payload.playwmUrl ??
+    firstUrl(payload.awemeDetail?.video?.play_addr_h264) ??
+    firstUrl(payload.awemeDetail?.video?.play_addr);
+  const formats =
+    fallbackPlayUrl !== null
+      ? await buildFormatsFromPlaywmUrl(fallbackPlayUrl, shareUrl)
+      : [];
+
+  if (formats.length === 0) {
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin mobile share browser video payload could not be extracted.",
+      502,
+    );
+  }
+
+  const best = formats[0];
+  const awemeDetail = payload.awemeDetail;
+
+  return {
+    ok: true,
+    platform: "douyin",
+    contentType: "video",
+    canonicalUrl: context.canonicalUrl,
+    title: sanitizeTitle(awemeDetail?.desc || payload.title),
+    id: awemeDetail?.aweme_id || context.id,
+    capabilities: DOUYIN_CAPABILITIES,
+    limitations: [
+      ...DOUYIN_LIMITATIONS,
+      "Douyin video links are signed and may require a fresh extract before downloading later.",
+    ],
+    video: {
+      best,
+      formats,
+      watermark: best.watermark,
+      quality: best.definition,
+      durationSeconds: awemeDetail?.video?.duration
+        ? Math.round(awemeDetail.video.duration / 1000)
+        : null,
+      poster: payload.poster,
+    },
+    platformMeta: {
+      source: "douyin",
+      extractionMode: awemeDetail ? "mobile-share-browser-data" : "mobile-share-browser-play",
       shareUrl,
     },
   };
@@ -1125,31 +1298,56 @@ async function extractDouyinVideoOnce(
 export async function extractDouyinVideo(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
-  let lastError: unknown = null;
+  const diagnostics: string[] = [];
 
   try {
-    return await extractDouyinVideoFromWebDetailApi(context);
+    return await Promise.any([
+      extractDouyinVideoFromWebDetailApi(context),
+      extractDouyinVideoFromMobileShare(context),
+    ]);
   } catch (error) {
-    lastError = error;
-    if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
+    if (!(error instanceof AggregateError)) {
+      throw error;
+    }
+
+    diagnostics.push(
+      ...error.errors
+        .filter((entry): entry is Error => entry instanceof Error)
+        .map((entry) => entry.message),
+    );
+
+    const fatalError = error.errors.find(
+      (entry) => entry instanceof Error && !isExtractFailedApiError(entry),
+    );
+
+    if (fatalError instanceof Error) {
+      throw fatalError;
+    }
+  }
+
+  try {
+    return await extractDouyinVideoFromMobileShareBrowser(context);
+  } catch (error) {
+    if (error instanceof Error) {
+      diagnostics.push(error.message);
+    }
+
+    if (!isExtractFailedApiError(error)) {
       throw error;
     }
   }
 
   try {
-    return await extractDouyinVideoFromMobileShare(context);
+    return await extractDouyinVideoOnce(context);
   } catch (error) {
-    lastError = error;
-    if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
-      throw error;
+    if (error instanceof Error) {
+      diagnostics.push(error.message);
     }
-  }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new ApiError(
-        "EXTRACT_FAILED",
-        "Douyin video payload could not be extracted.",
-        502,
-      );
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      diagnostics.join(" | ") || "Douyin video payload could not be extracted.",
+      502,
+    );
+  }
 }
