@@ -57,6 +57,7 @@ interface MobileShareVideoPayload {
   title: string;
   poster: string | null;
   playwmUrl: string | null;
+  awemeDetail: RawAwemeDetail | null;
 }
 
 function isNavigationTimeoutError(error: unknown) {
@@ -194,6 +195,66 @@ function buildDouyinShareVideoUrl(id: string) {
 async function collectMobileShareVideoPayload(
   shareUrl: string,
 ): Promise<MobileShareVideoPayload> {
+  const response = await fetch(shareUrl, {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      "user-agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    },
+  });
+
+  if (!response.ok) {
+    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+  }
+
+  const html = await response.text();
+  const routerDataMatch = html.match(
+    /<script[^>]*>\s*window\._ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/i,
+  );
+
+  if (!routerDataMatch?.[1]) {
+    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+  }
+
+  try {
+    const routerData = JSON.parse(routerDataMatch[1]) as {
+      loaderData?: Record<
+        string,
+        {
+          videoInfoRes?: {
+            item_list?: RawAwemeDetail[];
+          };
+        }
+      >;
+    };
+
+    const awemeDetail =
+      Object.values(routerData.loaderData ?? {})
+        .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
+        .find((item) => item.aweme_id) ?? null;
+
+    if (!awemeDetail) {
+      return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+    }
+
+    return {
+      title: awemeDetail.desc || "Untitled Douyin video",
+      poster:
+        firstUrl(awemeDetail.video?.origin_cover) ??
+        firstUrl(awemeDetail.video?.cover) ??
+        firstUrl(awemeDetail.video?.dynamic_cover),
+      playwmUrl: firstUrl(awemeDetail.video?.play_addr),
+      awemeDetail,
+    };
+  } catch {
+    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+  }
+}
+
+async function collectMobileShareVideoPayloadFromBrowser(
+  shareUrl: string,
+): Promise<MobileShareVideoPayload> {
   return withBrowserPage(async (page) => {
     await page.setViewport({
       width: 390,
@@ -233,6 +294,7 @@ async function collectMobileShareVideoPayload(
         title: document.title || "Untitled Douyin video",
         poster,
         playwmUrl,
+        awemeDetail: null,
       };
     });
   });
@@ -337,14 +399,15 @@ async function extractDouyinVideoFromMobileShare(
   }
 
   const best = formats[0];
+  const awemeDetail = payload.awemeDetail;
 
   return {
     ok: true,
     platform: "douyin",
     contentType: "video",
     canonicalUrl: context.canonicalUrl,
-    title: sanitizeTitle(payload.title),
-    id: context.id,
+    title: sanitizeTitle(awemeDetail?.desc || payload.title),
+    id: awemeDetail?.aweme_id || context.id,
     capabilities: DOUYIN_CAPABILITIES,
     limitations: [
       ...DOUYIN_LIMITATIONS,
@@ -355,12 +418,14 @@ async function extractDouyinVideoFromMobileShare(
       formats,
       watermark: best.watermark,
       quality: best.definition,
-      durationSeconds: null,
+      durationSeconds: awemeDetail?.video?.duration
+        ? Math.round(awemeDetail.video.duration / 1000)
+        : null,
       poster: payload.poster,
     },
     platformMeta: {
       source: "douyin",
-      extractionMode: "mobile-share-play",
+      extractionMode: awemeDetail ? "mobile-share-data" : "mobile-share-play",
       shareUrl,
     },
   };
