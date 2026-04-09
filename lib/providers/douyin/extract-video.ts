@@ -275,8 +275,27 @@ async function collectMobileShareVideoPayloadFromBrowser(
     await page.waitForFunction(
       () => {
         const video = document.querySelector("video");
+        const routerData = (window as Window & { _ROUTER_DATA?: unknown })
+          ._ROUTER_DATA as
+          | {
+              loaderData?: Record<
+                string,
+                {
+                  videoInfoRes?: {
+                    item_list?: Array<{ aweme_id?: string }>;
+                  };
+                }
+              >;
+            }
+          | undefined;
+        const hasRouterData = Object.values(routerData?.loaderData ?? {}).some(
+          (entry) => (entry.videoInfoRes?.item_list?.length ?? 0) > 0,
+        );
+
         return (
-          video instanceof HTMLVideoElement && Boolean(video.currentSrc || video.src)
+          (video instanceof HTMLVideoElement &&
+            Boolean(video.currentSrc || video.src)) ||
+          hasRouterData
         );
       },
       { timeout: 12_000 },
@@ -284,17 +303,50 @@ async function collectMobileShareVideoPayloadFromBrowser(
 
     return page.evaluate(() => {
       const video = document.querySelector("video");
+      const routerData = (window as Window & { _ROUTER_DATA?: unknown })
+        ._ROUTER_DATA as
+        | {
+            loaderData?: Record<
+              string,
+              {
+                videoInfoRes?: {
+                  item_list?: Array<{
+                    aweme_id?: string;
+                    desc?: string;
+                    video?: {
+                      duration?: number;
+                      play_addr?: { url_list?: string[] };
+                      cover?: { url_list?: string[] };
+                      origin_cover?: { url_list?: string[] };
+                      dynamic_cover?: { url_list?: string[] };
+                    };
+                  }>;
+                };
+              }
+            >;
+          }
+        | undefined;
+      const awemeDetail =
+        Object.values(routerData?.loaderData ?? {})
+          .flatMap((entry) => entry.videoInfoRes?.item_list ?? [])
+          .find((item) => item.aweme_id) ?? null;
       const playwmUrl =
-        video instanceof HTMLVideoElement ? video.currentSrc || video.src : null;
+        (video instanceof HTMLVideoElement ? video.currentSrc || video.src : null) ??
+        awemeDetail?.video?.play_addr?.url_list?.find(Boolean) ??
+        null;
       const poster =
         document.querySelector('meta[property="og:image"]')?.getAttribute("content") ??
-        (video instanceof HTMLVideoElement ? video.poster || null : null);
+        (video instanceof HTMLVideoElement ? video.poster || null : null) ??
+        awemeDetail?.video?.origin_cover?.url_list?.find(Boolean) ??
+        awemeDetail?.video?.cover?.url_list?.find(Boolean) ??
+        awemeDetail?.video?.dynamic_cover?.url_list?.find(Boolean) ??
+        null;
 
       return {
-        title: document.title || "Untitled Douyin video",
+        title: awemeDetail?.desc || document.title || "Untitled Douyin video",
         poster,
         playwmUrl,
-        awemeDetail: null,
+        awemeDetail,
       };
     });
   });
