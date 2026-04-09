@@ -68,6 +68,12 @@ interface MobileShareVideoPayload {
   awemeDetail: RawAwemeDetail | null;
 }
 
+interface WebDetailVideoPayload {
+  title: string;
+  poster: string | null;
+  awemeDetail: RawAwemeDetail | null;
+}
+
 const DOUYIN_WEB_DETAIL_ENDPOINT =
   "https://www.douyin.com/aweme/v1/web/aweme/detail/";
 
@@ -202,7 +208,66 @@ function fallbackFormatsFromMediaUrls(mediaUrls: string[]): VideoFormat[] {
 }
 
 function buildDouyinShareVideoUrl(id: string) {
-  return `https://www.iesdouyin.com/share/video/${id}/`;
+  return `https://www.iesdouyin.com/share/video/${id}/?from_ssr=1&region=CN`;
+}
+
+function extractAssignedJsonObject(html: string, assignment: string) {
+  const assignmentIndex = html.indexOf(assignment);
+  if (assignmentIndex < 0) {
+    return null;
+  }
+
+  const objectStart = html.indexOf("{", assignmentIndex + assignment.length);
+  if (objectStart < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let stringQuote = "";
+  let escaping = false;
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+
+      if (character === "\\") {
+        escaping = true;
+        continue;
+      }
+
+      if (character === stringQuote) {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      inString = true;
+      stringQuote = character;
+      continue;
+    }
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return html.slice(objectStart, index + 1);
+      }
+    }
+  }
+
+  return null;
 }
 
 function isResolvableDouyinPlayUrl(url: string | null | undefined) {
@@ -362,16 +427,16 @@ async function fetchDouyinWebDetail(
 }
 
 function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | null {
-  const routerDataMatch = html.match(
-    /<script[^>]*>\s*window\._ROUTER_DATA\s*=\s*(\{[\s\S]*?\})\s*<\/script>/i,
-  );
+  const routerDataJson =
+    extractAssignedJsonObject(html, "window._ROUTER_DATA =") ??
+    extractAssignedJsonObject(html, "window._ROUTER_DATA=");
 
-  if (!routerDataMatch?.[1]) {
+  if (!routerDataJson) {
     return null;
   }
 
   try {
-    const routerData = JSON.parse(routerDataMatch[1]) as {
+    const routerData = JSON.parse(routerDataJson) as {
       loaderData?: Record<
         string,
         {
@@ -399,20 +464,30 @@ async function collectMobileShareVideoPayload(
     method: "GET",
     cache: "no-store",
     headers: {
+      "accept-language": DOUYIN_WEB_ACCEPT_LANGUAGE,
+      referer: DOUYIN_WEB_REFERER,
       "user-agent":
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
     },
   });
 
   if (!response.ok) {
-    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin share page could not be loaded.",
+      502,
+    );
   }
 
   const html = await response.text();
   const awemeDetail = extractDouyinAwemeDetailFromShareHtml(html);
 
   if (!awemeDetail) {
-    return collectMobileShareVideoPayloadFromBrowser(shareUrl);
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin share payload could not be extracted.",
+      502,
+    );
   }
 
   return {
@@ -423,6 +498,78 @@ async function collectMobileShareVideoPayload(
       firstUrl(awemeDetail.video?.dynamic_cover),
     playwmUrl: firstUrl(awemeDetail.video?.play_addr),
     awemeDetail,
+  };
+}
+
+async function extractDouyinVideoFromWebDetailApi(
+  context: ExtractionContext,
+): Promise<ExtractSuccessResult> {
+  const detail = await fetchDouyinWebDetail(context);
+  const awemeDetail = detail?.aweme_detail;
+  const video = awemeDetail?.video;
+
+  if (!awemeDetail || !video) {
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin web detail payload could not be extracted.",
+      502,
+    );
+  }
+
+  let formats = await resolveDouyinFormatsToDirectUrls(
+    mapDouyinVideoFormats(video.bit_rate ?? [], video.ratio),
+    context.canonicalUrl,
+  );
+
+  if (formats.length === 0) {
+    const fallbackPlayUrl =
+      firstUrl(video.play_addr_h264) ??
+      firstUrl(video.play_addr);
+
+    if (fallbackPlayUrl) {
+      formats = await buildFormatsFromPlaywmUrl(fallbackPlayUrl, context.canonicalUrl);
+    }
+  }
+
+  if (formats.length === 0) {
+    throw new ApiError(
+      "EXTRACT_FAILED",
+      "Douyin web detail video payload could not be extracted.",
+      502,
+    );
+  }
+
+  const best = formats[0];
+
+  return {
+    ok: true,
+    platform: "douyin",
+    contentType: "video",
+    canonicalUrl: context.canonicalUrl,
+    title: sanitizeTitle(awemeDetail.desc || "Untitled Douyin video"),
+    id: awemeDetail.aweme_id || context.id,
+    capabilities: DOUYIN_CAPABILITIES,
+    limitations: [
+      ...DOUYIN_LIMITATIONS,
+      "Douyin video links are signed and may require a fresh extract before downloading later.",
+    ],
+    video: {
+      best,
+      formats,
+      watermark: best.watermark,
+      quality: best.definition,
+      durationSeconds: video.duration ? Math.round(video.duration / 1000) : null,
+      poster:
+        firstUrl(video.origin_cover) ??
+        firstUrl(video.cover) ??
+        firstUrl(video.dynamic_cover) ??
+        null,
+    },
+    platformMeta: {
+      source: "douyin",
+      extractionMode: "web-detail-api",
+      ratio: video.ratio ?? null,
+    },
   };
 }
 
@@ -818,11 +965,9 @@ async function collectVideoPagePayload(
 async function extractDouyinVideoOnce(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
-  const detail = await fetchDouyinWebDetail(context);
-  const awemeDetail = detail?.aweme_detail;
-  const payload = awemeDetail ? null : await collectVideoPagePayload(context.canonicalUrl);
-  const browserDetail = payload?.detail?.aweme_detail;
-  const activeAwemeDetail = awemeDetail ?? browserDetail;
+  const payload = await collectVideoPagePayload(context.canonicalUrl);
+  const browserDetail = payload.detail?.aweme_detail;
+  const activeAwemeDetail = browserDetail;
   const video = activeAwemeDetail?.video;
 
   let formats = await resolveDouyinFormatsToDirectUrls(
@@ -896,11 +1041,7 @@ async function extractDouyinVideoOnce(
     },
     platformMeta: {
       source: "douyin",
-      extractionMode: awemeDetail
-        ? "web-detail-api"
-        : browserDetail
-          ? "aweme-detail"
-          : "dom-video",
+      extractionMode: browserDetail ? "aweme-detail" : "dom-video",
       ratio: video?.ratio ?? null,
     },
   };
@@ -912,7 +1053,7 @@ export async function extractDouyinVideo(
   let lastError: unknown = null;
 
   try {
-    return await extractDouyinVideoOnce(context);
+    return await extractDouyinVideoFromWebDetailApi(context);
   } catch (error) {
     lastError = error;
     if (!(error instanceof ApiError) || error.code !== "EXTRACT_FAILED") {
