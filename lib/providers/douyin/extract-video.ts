@@ -270,6 +270,66 @@ function extractAssignedJsonObject(html: string, assignment: string) {
   return null;
 }
 
+function extractJsonArrayByKey(html: string, key: string) {
+  const pattern = `"${key}"`;
+  const keyIndex = html.indexOf(pattern);
+  if (keyIndex < 0) {
+    return null;
+  }
+
+  const arrayStart = html.indexOf("[", keyIndex + pattern.length);
+  if (arrayStart < 0) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let stringQuote = "";
+  let escaping = false;
+
+  for (let index = arrayStart; index < html.length; index += 1) {
+    const character = html[index];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+
+      if (character === "\\") {
+        escaping = true;
+        continue;
+      }
+
+      if (character === stringQuote) {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      inString = true;
+      stringQuote = character;
+      continue;
+    }
+
+    if (character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return html.slice(arrayStart, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
 function isResolvableDouyinPlayUrl(url: string | null | undefined) {
   if (!url) {
     return false;
@@ -432,7 +492,18 @@ function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | n
     extractAssignedJsonObject(html, "window._ROUTER_DATA=");
 
   if (!routerDataJson) {
-    return null;
+    const itemListJson = extractJsonArrayByKey(html, "item_list");
+
+    if (!itemListJson) {
+      return null;
+    }
+
+    try {
+      const itemList = JSON.parse(itemListJson) as RawAwemeDetail[];
+      return itemList.find((item) => item.aweme_id && firstUrl(item.video?.play_addr)) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   try {
@@ -460,14 +531,18 @@ function extractDouyinAwemeDetailFromShareHtml(html: string): RawAwemeDetail | n
 async function collectMobileShareVideoPayload(
   shareUrl: string,
 ): Promise<MobileShareVideoPayload> {
+  const cookieHeader = await collectDouyinWebCookies(shareUrl).catch(() => "");
   const response = await fetch(shareUrl, {
     method: "GET",
     cache: "no-store",
     headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       "accept-language": DOUYIN_WEB_ACCEPT_LANGUAGE,
       referer: DOUYIN_WEB_REFERER,
       "user-agent":
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+      ...(cookieHeader ? { cookie: cookieHeader } : {}),
     },
   });
 
