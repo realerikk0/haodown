@@ -2,9 +2,10 @@ import { ApiError } from "@/lib/errors";
 import type { PlatformDescriptor } from "@/lib/models";
 import { douyinProvider } from "@/lib/providers/douyin";
 import { toutiaoProvider } from "@/lib/providers/toutiao";
+import { xiaohongshuProvider } from "@/lib/providers/xiaohongshu";
 import type { Provider } from "@/lib/providers/types";
 
-const providers: Provider[] = [toutiaoProvider, douyinProvider];
+const providers: Provider[] = [toutiaoProvider, douyinProvider, xiaohongshuProvider];
 
 export function listPlatforms(): PlatformDescriptor[] {
   return providers.map((provider) => provider.descriptor);

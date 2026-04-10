@@ -9,6 +9,6 @@ describe("/api/platforms", () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(body.platforms).toHaveLength(2);
+    expect(body.platforms).toHaveLength(3);
   });
 });

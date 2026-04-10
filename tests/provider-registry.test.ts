@@ -13,6 +13,11 @@ describe("provider registry", () => {
     expect(provider.descriptor.platform).toBe("douyin");
   });
 
+  it("matches Xiaohongshu URLs", () => {
+    const provider = getProviderForUrl(new URL("https://xhslink.com/o/test"));
+    expect(provider.descriptor.platform).toBe("xiaohongshu");
+  });
+
   it("lists enabled platforms", () => {
     expect(listPlatforms()).toEqual(
       expect.arrayContaining([
@@ -22,6 +27,10 @@ describe("provider registry", () => {
         }),
         expect.objectContaining({
           platform: "douyin",
+          enabled: true,
+        }),
+        expect.objectContaining({
+          platform: "xiaohongshu",
           enabled: true,
         }),
       ]),

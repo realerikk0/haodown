@@ -51,6 +51,16 @@ function summarizeImages(result: ExtractSuccessResult) {
   return preview;
 }
 
+function getLivePhotoImages(result: ExtractSuccessResult) {
+  if (!result.images || result.images.length === 0) {
+    return [];
+  }
+
+  return result.images.filter(
+    (image) => image.livePhoto && typeof image.motionUrl === "string" && image.motionUrl.length > 0,
+  );
+}
+
 function getAccessLabel(viewer: ViewerState) {
   if (viewer.authMode === "authenticated") {
     return "已登录";
@@ -207,6 +217,7 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
               <span className={styles.platformLabel}>支持平台</span>
               <span className={styles.platformPill}>今日头条</span>
               <span className={styles.platformPill}>抖音</span>
+              <span className={styles.platformPill}>小红书</span>
             </div>
             <div className={styles.heroMeta}>
               <span className={styles.metaPill}>支持整段分享文案识别</span>
@@ -424,6 +435,7 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                 }
 
                 const previewImages = summarizeImages(result.payload);
+                const livePhotoImages = getLivePhotoImages(result.payload);
 
                 return (
                   <article className={styles.card} key={`${result.source}-${result.payload.id}`}>
@@ -542,6 +554,60 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                             </button>
                           </div>
                         </div>
+
+                        {livePhotoImages.length > 0 ? (
+                          <>
+                            <span className={styles.cardLabel}>
+                              Live Photo 动图 · {livePhotoImages.length}
+                            </span>
+                            <div className={styles.linkStack}>
+                              {livePhotoImages.map((image) => (
+                                <div
+                                  className={styles.mediaRow}
+                                  key={`${result.payload.id}-motion-${image.index}`}
+                                >
+                                  <div className={styles.mediaMeta}>
+                                    <span className={styles.mediaStrong}>
+                                      #{image.index} 动态资源
+                                    </span>
+                                    <span className={styles.mediaSubtle}>{image.motionUrl}</span>
+                                  </div>
+                                  <button
+                                    className={styles.linkButton}
+                                    type="button"
+                                    onClick={() => {
+                                      void copyText(image.motionUrl!);
+                                    }}
+                                  >
+                                    复制
+                                  </button>
+                                </div>
+                              ))}
+                              <div className={styles.mediaRow}>
+                                <div className={styles.mediaMeta}>
+                                  <span className={styles.mediaStrong}>全部动态图链接</span>
+                                  <span className={styles.mediaSubtle}>
+                                    一次性复制当前卡片下的全部动态资源地址
+                                  </span>
+                                </div>
+                                <button
+                                  className={styles.linkButton}
+                                  type="button"
+                                  onClick={() => {
+                                    void copyText(
+                                      livePhotoImages
+                                        .map((image) => image.motionUrl)
+                                        .filter((url): url is string => Boolean(url))
+                                        .join("\n"),
+                                    );
+                                  }}
+                                >
+                                  全部复制
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
                       </section>
                     ) : null}
 

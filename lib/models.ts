@@ -1,4 +1,4 @@
-export type SupportedPlatform = "toutiao" | "douyin";
+export type SupportedPlatform = "toutiao" | "douyin" | "xiaohongshu";
 
 export type ContentType = "video" | "gallery";
 
@@ -43,6 +43,8 @@ export interface ImageAsset {
   width: number | null;
   height: number | null;
   url: string;
+  livePhoto?: boolean;
+  motionUrl?: string | null;
 }
 
 export interface ExtractSuccessResult {
