@@ -113,8 +113,7 @@
   box-shadow: var(--shadow);
 }
 
-.batchSection,
-.accountSection {
+.batchSection {
   margin-top: 28px;
 }
 
@@ -156,7 +155,7 @@
   text-align: right;
 }
 
-.logBadge {
+.statusBadge {
   flex: none;
   align-self: start;
   padding: 10px 14px;
@@ -166,59 +165,6 @@
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.changelogList {
-  display: grid;
-  gap: 12px;
-  max-height: 430px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.changelogItem {
-  padding: 16px 18px;
-  border-radius: 22px;
-  background: rgba(18, 33, 43, 0.04);
-}
-
-.changelogHead {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
-.changelogVersion {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--accent-strong);
-}
-
-.changelogDate {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.changelogSummary {
-  margin: 10px 0 0;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.changelogDetails {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.changelogDetail {
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: rgba(15, 118, 110, 0.08);
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .countNumber {
@@ -327,33 +273,6 @@
   margin-top: 32px;
 }
 
-.accountPanel {
-  padding: 22px 24px;
-  border-radius: 28px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(14px);
-}
-
-.accountPanel {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
-  gap: 24px;
-  align-items: start;
-}
-
-.accountMain,
-.accountToken {
-  min-width: 0;
-}
-
-.accountToken {
-  padding: 18px 20px;
-  border-radius: 24px;
-  background: rgba(18, 33, 43, 0.045);
-}
-
 .viewerLabel {
   display: block;
   margin-bottom: 10px;
@@ -386,6 +305,19 @@
   align-items: center;
   justify-content: flex-start;
   margin-top: 18px;
+}
+
+.tokenSection {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(18, 33, 43, 0.08);
+}
+
+.tokenSectionHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
 }
 
 .viewerStat {
@@ -443,12 +375,34 @@
 }
 
 .tokenValue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 1;
   min-width: 0;
-  padding: 12px 14px;
+  padding: 10px 10px 10px 14px;
   border-radius: 18px;
   background: rgba(18, 33, 43, 0.06);
+}
+
+.tokenText {
+  flex: 1;
+  min-width: 0;
   overflow: auto;
+  white-space: nowrap;
+}
+
+.tokenToggle {
+  flex: none;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(18, 33, 43, 0.08);
+  cursor: pointer;
+}
+
+.tokenToggle:hover {
+  background: rgba(18, 33, 43, 0.12);
 }
 
 .tokenPlaceholder {
@@ -728,8 +682,7 @@
 @media (max-width: 960px) {
   .hero,
   .resultGrid,
-  .summary,
-  .accountPanel {
+  .summary {
     grid-template-columns: 1fr;
   }
 
@@ -745,7 +698,7 @@
     justify-content: start;
   }
 
-  .changelogHead {
+  .tokenSectionHeader {
     align-items: start;
     flex-direction: column;
   }

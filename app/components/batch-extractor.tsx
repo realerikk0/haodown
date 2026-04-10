@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { startTransition, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 
 import type {
   ExtractErrorResult,
   ExtractSuccessResult,
-  ReleaseNoteEntry,
   ViewerState,
 } from "@/lib/models";
 import { extractBatchItems } from "@/lib/batch-input";
@@ -29,11 +28,22 @@ type ClientResult =
 
 interface BatchExtractorProps {
   viewer: ViewerState;
-  releaseNotes: ReleaseNoteEntry[];
 }
 
 function copyText(text: string) {
   return navigator.clipboard.writeText(text);
+}
+
+function maskToken(token: string) {
+  if (token.length <= 12) {
+    return "•".repeat(token.length);
+  }
+
+  const prefix = token.slice(0, 7);
+  const suffix = token.slice(-6);
+  const hidden = "•".repeat(Math.max(10, token.length - prefix.length - suffix.length));
+
+  return `${prefix}${hidden}${suffix}`;
 }
 
 function summarizeImages(result: ExtractSuccessResult) {
@@ -75,12 +85,15 @@ function getAccessLabel(viewer: ViewerState) {
   return "游客";
 }
 
-export function BatchExtractor({ viewer, releaseNotes }: BatchExtractorProps) {
+export function BatchExtractor({ viewer }: BatchExtractorProps) {
   const router = useRouter();
   const [rawInput, setRawInput] = useState("");
   const [results, setResults] = useState<ClientResult[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [showApiToken, setShowApiToken] = useState(false);
+  const [apiTokenCopied, setApiTokenCopied] = useState(false);
+  const apiTokenCopyTimerRef = useRef<number | null>(null);
 
   const batchItems = extractBatchItems(rawInput);
   const successCount = results.filter((result) => result.status === "success").length;
@@ -89,6 +102,32 @@ export function BatchExtractor({ viewer, releaseNotes }: BatchExtractorProps) {
     viewer.authMode === "authenticated"
       ? viewer.dailyRemaining === 0 && (viewer.creditsBalance ?? 0) === 0
       : viewer.dailyRemaining === 0;
+
+  useEffect(() => {
+    return () => {
+      if (apiTokenCopyTimerRef.current !== null) {
+        window.clearTimeout(apiTokenCopyTimerRef.current);
+      }
+    };
+  }, []);
+
+  async function handleCopyApiToken() {
+    if (!viewer.apiToken) {
+      return;
+    }
+
+    await copyText(viewer.apiToken);
+    setApiTokenCopied(true);
+
+    if (apiTokenCopyTimerRef.current !== null) {
+      window.clearTimeout(apiTokenCopyTimerRef.current);
+    }
+
+    apiTokenCopyTimerRef.current = window.setTimeout(() => {
+      setApiTokenCopied(false);
+      apiTokenCopyTimerRef.current = null;
+    }, 1600);
+  }
 
   async function runBatch(items: string[]) {
     setIsExtracting(true);
@@ -231,125 +270,110 @@ export function BatchExtractor({ viewer, releaseNotes }: BatchExtractorProps) {
           <section className={styles.heroPanel}>
             <div className={styles.panelTop}>
               <div>
-                <h2 className={styles.panelTitle}>更新日志</h2>
-                <p className={styles.panelCopy}>
-                  这里会根据 git 提交自动整理最近版本，方便你快速看到最近上线了什么。
-                </p>
-              </div>
-              <span className={styles.logBadge}>最近 6 次更新</span>
-            </div>
-
-            <div className={styles.changelogList}>
-              {releaseNotes.map((entry) => (
-                <article className={styles.changelogItem} key={`${entry.version}-${entry.date}`}>
-                  <div className={styles.changelogHead}>
-                    <span className={styles.changelogVersion}>{entry.version}</span>
-                    <time className={styles.changelogDate}>{entry.date}</time>
-                  </div>
-                  <p className={styles.changelogSummary}>{entry.summary}</p>
-                  {entry.details.length > 0 ? (
-                    <div className={styles.changelogDetails}>
-                      {entry.details.map((detail) => (
-                        <span className={styles.changelogDetail} key={`${entry.version}-${detail}`}>
-                          {detail}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
-          </section>
-        </section>
-
-        <section className={styles.accountSection}>
-          <article className={styles.accountPanel}>
-            <div className={styles.accountMain}>
-              <div>
                 <span className={styles.viewerLabel}>账户状态</span>
-                <h2 className={styles.viewerTitle}>
+                <h2 className={styles.panelTitle}>
                   {viewer.authMode === "authenticated"
                     ? "账号已登录"
                     : viewer.authMode === "disabled"
                       ? "登录功能暂未启用"
                       : "当前为游客模式"}
                 </h2>
-                <p className={styles.viewerCopy}>{viewer.note}</p>
+                <p className={styles.panelCopy}>
+                  {viewer.note}
+                </p>
               </div>
-
-              {viewer.authMode === "authenticated" ? (
-                <div className={styles.viewerActions}>
-                  <div className={styles.viewerStat}>
-                    <span className={styles.viewerStatLabel}>邮箱</span>
-                    <span className={styles.viewerStatValue}>{viewer.email}</span>
-                  </div>
-                  <div className={styles.viewerStat}>
-                    <span className={styles.viewerStatLabel}>今日剩余</span>
-                    <span className={styles.viewerStatValue}>
-                      {viewer.dailyRemaining}/{viewer.dailyLimit}
-                    </span>
-                  </div>
-                  <div className={styles.viewerStat}>
-                    <span className={styles.viewerStatLabel}>点数余额</span>
-                    <span className={styles.viewerStatValue}>{viewer.creditsBalance ?? 0}</span>
-                  </div>
-                  <div className={styles.viewerStat}>
-                    <span className={styles.viewerStatLabel}>已记录请求</span>
-                    <span className={styles.viewerStatValue}>{viewer.recordedRequests}</span>
-                  </div>
-                  <button
-                    className={styles.ghostButton}
-                    type="button"
-                    onClick={() => {
-                      void handleSignOut();
-                    }}
-                    disabled={isSigningOut}
-                  >
-                    {isSigningOut ? "退出中..." : "退出登录"}
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.viewerActions}>
-                  <div className={styles.viewerStat}>
-                    <span className={styles.viewerStatLabel}>今日剩余 2 次</span>
-                    <span className={styles.viewerStatValue}>
-                      {viewer.dailyRemaining}/{viewer.dailyLimit}
-                    </span>
-                  </div>
-                  {viewer.authAvailable ? (
-                    <>
-                      <Link className={styles.primaryLink} href="/auth?mode=sign-in">
-                        登录
-                      </Link>
-                      <Link className={styles.ghostLink} href="/auth?mode=sign-up">
-                        注册
-                      </Link>
-                    </>
-                  ) : null}
-                </div>
-              )}
+              <span className={styles.statusBadge}>{getAccessLabel(viewer)}</span>
             </div>
 
-            <div className={styles.accountToken}>
-              <span className={styles.viewerLabel}>开发者凭证</span>
-              <h3 className={styles.tokenTitle}>
-                {viewer.apiToken ? "你的专属 API Token" : "登录后可查看专属 API Token"}
-              </h3>
-              <p className={styles.tokenCopy}>
-                API Token 会和你的账号绑定，后续购买次数包或接入程序调用时都可以继续沿用。
-              </p>
+            {viewer.authMode === "authenticated" ? (
+              <div className={styles.viewerActions}>
+                <div className={styles.viewerStat}>
+                  <span className={styles.viewerStatLabel}>邮箱</span>
+                  <span className={styles.viewerStatValue}>{viewer.email}</span>
+                </div>
+                <div className={styles.viewerStat}>
+                  <span className={styles.viewerStatLabel}>今日剩余</span>
+                  <span className={styles.viewerStatValue}>
+                    {viewer.dailyRemaining}/{viewer.dailyLimit}
+                  </span>
+                </div>
+                <div className={styles.viewerStat}>
+                  <span className={styles.viewerStatLabel}>点数余额</span>
+                  <span className={styles.viewerStatValue}>{viewer.creditsBalance ?? 0}</span>
+                </div>
+                <div className={styles.viewerStat}>
+                  <span className={styles.viewerStatLabel}>已记录请求</span>
+                  <span className={styles.viewerStatValue}>{viewer.recordedRequests}</span>
+                </div>
+                <button
+                  className={styles.ghostButton}
+                  type="button"
+                  onClick={() => {
+                    void handleSignOut();
+                  }}
+                  disabled={isSigningOut}
+                >
+                  {isSigningOut ? "退出中..." : "退出登录"}
+                </button>
+              </div>
+            ) : (
+              <div className={styles.viewerActions}>
+                <div className={styles.viewerStat}>
+                  <span className={styles.viewerStatLabel}>今日剩余 2 次</span>
+                  <span className={styles.viewerStatValue}>
+                    {viewer.dailyRemaining}/{viewer.dailyLimit}
+                  </span>
+                </div>
+                {viewer.authAvailable ? (
+                  <>
+                    <Link className={styles.primaryLink} href="/auth?mode=sign-in">
+                      登录
+                    </Link>
+                    <Link className={styles.ghostLink} href="/auth?mode=sign-up">
+                      注册
+                    </Link>
+                  </>
+                ) : null}
+              </div>
+            )}
+
+            <div className={styles.tokenSection}>
+              <div className={styles.tokenSectionHeader}>
+                <div>
+                  <span className={styles.viewerLabel}>开发者凭证</span>
+                  <h3 className={styles.tokenTitle}>
+                    {viewer.apiToken ? "专属 API Token" : "登录后可查看专属 API Token"}
+                  </h3>
+                  <p className={styles.tokenCopy}>
+                    API Token 会和你的账号绑定，后续购买次数包或接入程序调用时都可以继续沿用。
+                  </p>
+                </div>
+              </div>
 
               {viewer.apiToken ? (
                 <div className={styles.tokenRow}>
-                  <code className={styles.tokenValue}>{viewer.apiToken}</code>
+                  <div className={styles.tokenValue}>
+                    <code className={styles.tokenText}>
+                      {showApiToken ? viewer.apiToken : maskToken(viewer.apiToken)}
+                    </code>
+                    <button
+                      className={styles.tokenToggle}
+                      type="button"
+                      onClick={() => {
+                        setShowApiToken((current) => !current);
+                      }}
+                    >
+                      {showApiToken ? "隐藏" : "显示"}
+                    </button>
+                  </div>
                   <button
                     className={styles.linkButton}
                     type="button"
                     onClick={() => {
-                      void copyText(viewer.apiToken!);
+                      void handleCopyApiToken();
                     }}
                   >
-                    复制凭证
+                    {apiTokenCopied ? "已复制" : "复制凭证"}
                   </button>
                 </div>
               ) : (
@@ -360,7 +384,7 @@ export function BatchExtractor({ viewer, releaseNotes }: BatchExtractorProps) {
                 </div>
               )}
             </div>
-          </article>
+          </section>
         </section>
 
         <section className={styles.batchSection}>
