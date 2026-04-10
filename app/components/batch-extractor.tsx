@@ -7,6 +7,7 @@ import { startTransition, useState } from "react";
 import type {
   ExtractErrorResult,
   ExtractSuccessResult,
+  ReleaseNoteEntry,
   ViewerState,
 } from "@/lib/models";
 import { extractBatchItems } from "@/lib/batch-input";
@@ -28,6 +29,7 @@ type ClientResult =
 
 interface BatchExtractorProps {
   viewer: ViewerState;
+  releaseNotes: ReleaseNoteEntry[];
 }
 
 function copyText(text: string) {
@@ -73,7 +75,7 @@ function getAccessLabel(viewer: ViewerState) {
   return "游客";
 }
 
-export function BatchExtractor({ viewer }: BatchExtractorProps) {
+export function BatchExtractor({ viewer, releaseNotes }: BatchExtractorProps) {
   const router = useRouter();
   const [rawInput, setRawInput] = useState("");
   const [results, setResults] = useState<ClientResult[]>([]);
@@ -229,6 +231,142 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
           <section className={styles.heroPanel}>
             <div className={styles.panelTop}>
               <div>
+                <h2 className={styles.panelTitle}>更新日志</h2>
+                <p className={styles.panelCopy}>
+                  这里会根据 git 提交自动整理最近版本，方便你快速看到最近上线了什么。
+                </p>
+              </div>
+              <span className={styles.logBadge}>最近 6 次更新</span>
+            </div>
+
+            <div className={styles.changelogList}>
+              {releaseNotes.map((entry) => (
+                <article className={styles.changelogItem} key={`${entry.version}-${entry.date}`}>
+                  <div className={styles.changelogHead}>
+                    <span className={styles.changelogVersion}>{entry.version}</span>
+                    <time className={styles.changelogDate}>{entry.date}</time>
+                  </div>
+                  <p className={styles.changelogSummary}>{entry.summary}</p>
+                  {entry.details.length > 0 ? (
+                    <div className={styles.changelogDetails}>
+                      {entry.details.map((detail) => (
+                        <span className={styles.changelogDetail} key={`${entry.version}-${detail}`}>
+                          {detail}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        </section>
+
+        <section className={styles.accountSection}>
+          <article className={styles.accountPanel}>
+            <div className={styles.accountMain}>
+              <div>
+                <span className={styles.viewerLabel}>账户状态</span>
+                <h2 className={styles.viewerTitle}>
+                  {viewer.authMode === "authenticated"
+                    ? "账号已登录"
+                    : viewer.authMode === "disabled"
+                      ? "登录功能暂未启用"
+                      : "当前为游客模式"}
+                </h2>
+                <p className={styles.viewerCopy}>{viewer.note}</p>
+              </div>
+
+              {viewer.authMode === "authenticated" ? (
+                <div className={styles.viewerActions}>
+                  <div className={styles.viewerStat}>
+                    <span className={styles.viewerStatLabel}>邮箱</span>
+                    <span className={styles.viewerStatValue}>{viewer.email}</span>
+                  </div>
+                  <div className={styles.viewerStat}>
+                    <span className={styles.viewerStatLabel}>今日剩余</span>
+                    <span className={styles.viewerStatValue}>
+                      {viewer.dailyRemaining}/{viewer.dailyLimit}
+                    </span>
+                  </div>
+                  <div className={styles.viewerStat}>
+                    <span className={styles.viewerStatLabel}>点数余额</span>
+                    <span className={styles.viewerStatValue}>{viewer.creditsBalance ?? 0}</span>
+                  </div>
+                  <div className={styles.viewerStat}>
+                    <span className={styles.viewerStatLabel}>已记录请求</span>
+                    <span className={styles.viewerStatValue}>{viewer.recordedRequests}</span>
+                  </div>
+                  <button
+                    className={styles.ghostButton}
+                    type="button"
+                    onClick={() => {
+                      void handleSignOut();
+                    }}
+                    disabled={isSigningOut}
+                  >
+                    {isSigningOut ? "退出中..." : "退出登录"}
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.viewerActions}>
+                  <div className={styles.viewerStat}>
+                    <span className={styles.viewerStatLabel}>今日剩余 2 次</span>
+                    <span className={styles.viewerStatValue}>
+                      {viewer.dailyRemaining}/{viewer.dailyLimit}
+                    </span>
+                  </div>
+                  {viewer.authAvailable ? (
+                    <>
+                      <Link className={styles.primaryLink} href="/auth?mode=sign-in">
+                        登录
+                      </Link>
+                      <Link className={styles.ghostLink} href="/auth?mode=sign-up">
+                        注册
+                      </Link>
+                    </>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            <div className={styles.accountToken}>
+              <span className={styles.viewerLabel}>开发者凭证</span>
+              <h3 className={styles.tokenTitle}>
+                {viewer.apiToken ? "你的专属 API Token" : "登录后可查看专属 API Token"}
+              </h3>
+              <p className={styles.tokenCopy}>
+                API Token 会和你的账号绑定，后续购买次数包或接入程序调用时都可以继续沿用。
+              </p>
+
+              {viewer.apiToken ? (
+                <div className={styles.tokenRow}>
+                  <code className={styles.tokenValue}>{viewer.apiToken}</code>
+                  <button
+                    className={styles.linkButton}
+                    type="button"
+                    onClick={() => {
+                      void copyText(viewer.apiToken!);
+                    }}
+                  >
+                    复制凭证
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.tokenPlaceholder}>
+                  {viewer.authAvailable
+                    ? "登录或注册后，这里会显示你的专属 API Token。"
+                    : "完成账号系统配置后，这里会显示你的专属 API Token。"}
+                </div>
+              )}
+            </div>
+          </article>
+        </section>
+
+        <section className={styles.batchSection}>
+          <section className={styles.batchPanel}>
+            <div className={styles.panelTop}>
+              <div>
                 <h2 className={styles.panelTitle}>批量解析</h2>
                 <p className={styles.panelCopy}>
                   支持直接粘贴多行链接，也支持整段分享文案。系统会优先识别其中的有效链接并批量处理。
@@ -280,105 +418,6 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
               </p>
             </form>
           </section>
-        </section>
-
-        <section className={styles.viewerStrip}>
-          <article className={styles.viewerCard}>
-            <div>
-              <span className={styles.viewerLabel}>账户状态</span>
-              <h2 className={styles.viewerTitle}>
-                {viewer.authMode === "authenticated"
-                  ? "账号已登录"
-                  : viewer.authMode === "disabled"
-                    ? "登录功能暂未启用"
-                    : "当前为游客模式"}
-              </h2>
-              <p className={styles.viewerCopy}>{viewer.note}</p>
-            </div>
-
-            {viewer.authMode === "authenticated" ? (
-              <div className={styles.viewerActions}>
-                <div className={styles.viewerStat}>
-                  <span className={styles.viewerStatLabel}>邮箱</span>
-                  <span className={styles.viewerStatValue}>{viewer.email}</span>
-                </div>
-                <div className={styles.viewerStat}>
-                  <span className={styles.viewerStatLabel}>今日剩余</span>
-                  <span className={styles.viewerStatValue}>
-                    {viewer.dailyRemaining}/{viewer.dailyLimit}
-                  </span>
-                </div>
-                <div className={styles.viewerStat}>
-                  <span className={styles.viewerStatLabel}>点数余额</span>
-                  <span className={styles.viewerStatValue}>{viewer.creditsBalance ?? 0}</span>
-                </div>
-                <div className={styles.viewerStat}>
-                  <span className={styles.viewerStatLabel}>已记录请求</span>
-                  <span className={styles.viewerStatValue}>{viewer.recordedRequests}</span>
-                </div>
-                <button
-                  className={styles.ghostButton}
-                  type="button"
-                  onClick={() => {
-                    void handleSignOut();
-                  }}
-                  disabled={isSigningOut}
-                >
-                  {isSigningOut ? "退出中..." : "退出登录"}
-                </button>
-              </div>
-            ) : (
-              <div className={styles.viewerActions}>
-                <div className={styles.viewerStat}>
-                  <span className={styles.viewerStatLabel}>今日剩余 2 次</span>
-                  <span className={styles.viewerStatValue}>
-                    {viewer.dailyRemaining}/{viewer.dailyLimit}
-                  </span>
-                </div>
-                {viewer.authAvailable ? (
-                  <>
-                    <Link className={styles.primaryLink} href="/auth?mode=sign-in">
-                      登录
-                    </Link>
-                    <Link className={styles.ghostLink} href="/auth?mode=sign-up">
-                      注册
-                    </Link>
-                  </>
-                ) : null}
-              </div>
-            )}
-          </article>
-
-          <article className={styles.tokenCard}>
-            <span className={styles.viewerLabel}>开发者凭证</span>
-            <h3 className={styles.tokenTitle}>
-              {viewer.apiToken ? "你的专属 API Token" : "登录后可查看专属 API Token"}
-            </h3>
-            <p className={styles.tokenCopy}>
-              API Token 会和你的账号绑定，后续购买次数包或接入程序调用时都可以继续沿用。
-            </p>
-
-            {viewer.apiToken ? (
-              <div className={styles.tokenRow}>
-                <code className={styles.tokenValue}>{viewer.apiToken}</code>
-                <button
-                  className={styles.linkButton}
-                  type="button"
-                  onClick={() => {
-                    void copyText(viewer.apiToken!);
-                  }}
-                >
-                  复制凭证
-                </button>
-              </div>
-            ) : (
-              <div className={styles.tokenPlaceholder}>
-                {viewer.authAvailable
-                  ? "登录或注册后，这里会显示你的专属 API Token。"
-                  : "完成账号系统配置后，这里会显示你的专属 API Token。"}
-              </div>
-            )}
-          </article>
         </section>
 
         <section className={styles.summary}>
@@ -508,6 +547,16 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                                 className={styles.mediaRow}
                                 key={`${result.payload.id}-${image.index}`}
                               >
+                                {!isMore ? (
+                                  <div className={styles.mediaPreview}>
+                                    <img
+                                      alt=""
+                                      className={styles.mediaThumb}
+                                      loading="lazy"
+                                      src={image.url}
+                                    />
+                                  </div>
+                                ) : null}
                                 <div className={styles.mediaMeta}>
                                   <span className={styles.mediaStrong}>
                                     {isMore
@@ -566,6 +615,14 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                                   className={styles.mediaRow}
                                   key={`${result.payload.id}-motion-${image.index}`}
                                 >
+                                  <div className={styles.mediaPreview}>
+                                    <img
+                                      alt=""
+                                      className={styles.mediaThumb}
+                                      loading="lazy"
+                                      src={image.url}
+                                    />
+                                  </div>
                                   <div className={styles.mediaMeta}>
                                     <span className={styles.mediaStrong}>
                                       #{image.index} 动态资源

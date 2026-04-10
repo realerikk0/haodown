@@ -1,3 +1,6 @@
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
+
 import { ApiError } from "@/lib/errors";
 import { withBrowserPage } from "@/lib/browser";
 import type { ExtractSuccessResult, VideoFormat } from "@/lib/models";
@@ -122,10 +125,7 @@ function isPlayableDouyinVideoUrl(url: string | null | undefined) {
     return false;
   }
 
-  return (
-    url.includes("douyinvod.com") &&
-    (url.includes("mime_type=video_mp4") || url.includes("/video/tos/"))
-  );
+  return url.includes("douyinvod.com") && !url.includes(".m3u8");
 }
 
 function isDownloadableDouyinVideoUrl(url: string | null | undefined) {
@@ -390,6 +390,83 @@ function getResponseSetCookies(headers: Headers) {
   return fallback ? [fallback] : [];
 }
 
+function requestDouyinUrl(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{
+  statusCode: number | null;
+  headers: IncomingHttpHeaders;
+  url: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const requestImpl = target.protocol === "http:" ? httpRequest : httpsRequest;
+    const request = requestImpl(
+      target,
+      {
+        method: "GET",
+        headers,
+      },
+      (response) => {
+        response.resume();
+        resolve({
+          statusCode: response.statusCode ?? null,
+          headers: response.headers,
+          url,
+        });
+      },
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function resolveDouyinPlayRedirectWithNodeRequest(
+  url: string,
+  referer: string,
+  redirectDepth = 0,
+): Promise<string | null> {
+  if (redirectDepth > 2) {
+    return null;
+  }
+
+  const requestHeaders = {
+    referer,
+    range: "bytes=0-0",
+    "user-agent":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+  };
+
+  const response = await requestDouyinUrl(url, requestHeaders).catch(() => null);
+  if (!response) {
+    return null;
+  }
+
+  const location = response.headers.location;
+  if (
+    response.statusCode !== null &&
+    response.statusCode >= 300 &&
+    response.statusCode < 400 &&
+    typeof location === "string"
+  ) {
+    const redirectUrl = new URL(location, url).toString();
+    if (isPlayableDouyinVideoUrl(redirectUrl)) {
+      return redirectUrl;
+    }
+
+    return resolveDouyinPlayRedirectWithNodeRequest(
+      redirectUrl,
+      referer,
+      redirectDepth + 1,
+    );
+  }
+
+  return response.statusCode && response.statusCode < 400 && isPlayableDouyinVideoUrl(url)
+    ? url
+    : null;
+}
+
 async function collectDouyinWebCookies(canonicalUrl: string) {
   const cookieJar = new Map<string, string>();
 
@@ -609,15 +686,6 @@ async function collectMobileShareVideoPayload(
   const awemeDetail = extractDouyinAwemeDetailFromShareHtml(html);
 
   if (!awemeDetail) {
-    const debugSummary = [
-      `finalUrl=${response.url}`,
-      `len=${html.length}`,
-      `router=${html.includes("window._ROUTER_DATA") ? 1 : 0}`,
-      `itemList=${html.includes("\"item_list\"") ? 1 : 0}`,
-      `aweme=${html.includes("\"aweme_id\"") ? 1 : 0}`,
-      `play=${html.includes("\"play_addr\"") ? 1 : 0}`,
-    ].join(",");
-
     console.error(
       "[douyin:share-parse-failed]",
       JSON.stringify({
@@ -633,7 +701,7 @@ async function collectMobileShareVideoPayload(
     );
     throw new ApiError(
       "EXTRACT_FAILED",
-      `Douyin share payload could not be extracted. ${debugSummary}`,
+      "Douyin share payload could not be extracted.",
       502,
     );
   }
@@ -687,7 +755,11 @@ async function extractDouyinVideoFromWebDetailApi(
     );
   }
 
-  const best = formats[0];
+  const upgradedFormats = await upgradeTopDouyinFormatToDirectUrl(
+    formats,
+    context.canonicalUrl,
+  );
+  const best = upgradedFormats[0];
 
   return {
     ok: true,
@@ -703,7 +775,7 @@ async function extractDouyinVideoFromWebDetailApi(
     ],
     video: {
       best,
-      formats,
+      formats: upgradedFormats,
       watermark: best.watermark,
       quality: best.definition,
       durationSeconds: video.duration ? Math.round(video.duration / 1000) : null,
@@ -887,6 +959,22 @@ async function resolveDouyinPlayRedirect(
     return response.url;
   }
 
+  const nodeResolved = await resolveDouyinPlayRedirectWithNodeRequest(url, referer);
+  if (nodeResolved) {
+    return nodeResolved;
+  }
+
+  const followedGet = await fetch(url, {
+    method: "GET",
+    redirect: "follow",
+    cache: "no-store",
+    headers: requestHeaders,
+  }).catch(() => null);
+
+  if (followedGet?.ok && isPlayableDouyinVideoUrl(followedGet.url)) {
+    return followedGet.url;
+  }
+
   const followed = await fetch(url, {
     method: "HEAD",
     redirect: "follow",
@@ -899,6 +987,71 @@ async function resolveDouyinPlayRedirect(
   }
 
   return null;
+}
+
+async function resolveDouyinPlayRedirectWithBrowser(
+  url: string,
+  referer: string,
+): Promise<string | null> {
+  return withBrowserPage(async (page) => {
+    const resolvedUrls: string[] = [];
+
+    await page.setViewport({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+    });
+    await page.setUserAgent(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+    );
+    await page.setExtraHTTPHeaders({ referer });
+
+    page.on("response", (response) => {
+      const responseUrl = response.url();
+      const contentType = response.headers()["content-type"] ?? "";
+
+      if (
+        isPlayableDouyinVideoUrl(responseUrl) ||
+        contentType.includes("video/mp4")
+      ) {
+        resolvedUrls.push(responseUrl);
+      }
+    });
+
+    await page.goto("about:blank");
+    await page.setContent("<video id='dy-player' playsinline muted autoplay controls></video>");
+    await page.evaluate((targetUrl) => {
+      const video = document.getElementById("dy-player");
+      if (video instanceof HTMLVideoElement) {
+        video.src = targetUrl;
+        video.load();
+      }
+    }, url);
+
+    await page
+      .waitForResponse(
+        (response) => {
+          const responseUrl = response.url();
+          const contentType = response.headers()["content-type"] ?? "";
+          return (
+            isPlayableDouyinVideoUrl(responseUrl) ||
+            contentType.includes("video/mp4")
+          );
+        },
+        { timeout: 5_000 },
+      )
+      .catch(() => null);
+
+    const directUrl = resolvedUrls.find((entry) => isPlayableDouyinVideoUrl(entry));
+    if (directUrl) {
+      return directUrl;
+    }
+
+    const lastUrl = resolvedUrls.at(-1);
+    return lastUrl && isPlayableDouyinVideoUrl(lastUrl) ? lastUrl : null;
+  }).catch(() => null);
 }
 
 async function buildFormatsFromPlaywmUrl(
@@ -918,35 +1071,43 @@ async function buildFormatsFromPlaywmUrl(
     new Set(["1080p", currentRatio, "720p", "540p"]),
   );
 
+  const resolvedCandidates = await Promise.all(
+    candidateDefinitions.map(async (definition) => {
+      const playUrl = new URL("https://www.iesdouyin.com/aweme/v1/play/");
+      playUrl.searchParams.set("video_id", videoId);
+      playUrl.searchParams.set("ratio", definition);
+      playUrl.searchParams.set("line", line);
+
+      const resolvedUrl = await resolveDouyinPlayRedirect(playUrl.toString(), referer);
+      const finalUrl =
+        resolvedUrl && isPlayableDouyinVideoUrl(resolvedUrl)
+          ? resolvedUrl
+          : playUrl.toString();
+
+      return {
+        definition,
+        width: null,
+        height: null,
+        bitrate: extractNumericQueryParam(finalUrl, "br"),
+        url: finalUrl,
+        watermark: "none" as const,
+      };
+    }),
+  );
+
   const formats: VideoFormat[] = [];
   const seen = new Set<string>();
 
-  for (const definition of candidateDefinitions) {
-    const playUrl = new URL("https://www.iesdouyin.com/aweme/v1/play/");
-    playUrl.searchParams.set("video_id", videoId);
-    playUrl.searchParams.set("ratio", definition);
-    playUrl.searchParams.set("line", line);
-
-    const resolvedUrl = await resolveDouyinPlayRedirect(playUrl.toString(), referer);
-    const finalUrl =
-      resolvedUrl && isPlayableDouyinVideoUrl(resolvedUrl)
-        ? resolvedUrl
-        : playUrl.toString();
-
-    const dedupeKey = finalUrl.split("?")[0];
+  for (const candidate of resolvedCandidates) {
+    const dedupeKey = isPlayableDouyinVideoUrl(candidate.url)
+      ? candidate.url.split("?")[0]
+      : candidate.url;
     if (seen.has(dedupeKey)) {
       continue;
     }
 
     seen.add(dedupeKey);
-    formats.push({
-      definition,
-      width: null,
-      height: null,
-      bitrate: extractNumericQueryParam(finalUrl, "br"),
-      url: finalUrl,
-      watermark: "none",
-    });
+    formats.push(candidate);
   }
 
   return formats.sort((left, right) => {
@@ -981,7 +1142,9 @@ async function resolveDouyinFormatsToDirectUrls(
       continue;
     }
 
-    const dedupeKey = resolvedUrl.split("?")[0];
+    const dedupeKey = isPlayableDouyinVideoUrl(resolvedUrl)
+      ? resolvedUrl.split("?")[0]
+      : resolvedUrl;
     if (seen.has(dedupeKey)) {
       continue;
     }
@@ -1011,6 +1174,36 @@ async function resolveDouyinFormatsToDirectUrls(
   });
 }
 
+async function upgradeTopDouyinFormatToDirectUrl(
+  formats: VideoFormat[],
+  referer: string,
+) {
+  const [firstFormat] = formats;
+  if (!firstFormat || !isResolvableDouyinPlayUrl(firstFormat.url)) {
+    return formats;
+  }
+
+  const browserResolved = await resolveDouyinPlayRedirectWithBrowser(
+    firstFormat.url,
+    referer,
+  );
+
+  if (!browserResolved || !isPlayableDouyinVideoUrl(browserResolved)) {
+    return formats;
+  }
+
+  return [
+    {
+      ...firstFormat,
+      url: browserResolved,
+      bitrate:
+        firstFormat.bitrate ?? extractNumericQueryParam(browserResolved, "br"),
+      watermark: "none" as const,
+    },
+    ...formats.slice(1),
+  ];
+}
+
 async function extractDouyinVideoFromMobileShare(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
@@ -1020,8 +1213,9 @@ async function extractDouyinVideoFromMobileShare(
     payload.playwmUrl !== null
       ? await buildFormatsFromPlaywmUrl(payload.playwmUrl, shareUrl)
       : [];
+  const upgradedFormats = await upgradeTopDouyinFormatToDirectUrl(formats, shareUrl);
 
-  if (formats.length === 0) {
+  if (upgradedFormats.length === 0) {
     throw new ApiError(
       "EXTRACT_FAILED",
       "Douyin mobile share video payload could not be extracted.",
@@ -1029,7 +1223,7 @@ async function extractDouyinVideoFromMobileShare(
     );
   }
 
-  const best = formats[0];
+  const best = upgradedFormats[0];
   const awemeDetail = payload.awemeDetail;
 
   return {
@@ -1046,7 +1240,7 @@ async function extractDouyinVideoFromMobileShare(
     ],
     video: {
       best,
-      formats,
+      formats: upgradedFormats,
       watermark: best.watermark,
       quality: best.definition,
       durationSeconds: awemeDetail?.video?.duration
@@ -1075,8 +1269,9 @@ async function extractDouyinVideoFromMobileShareBrowser(
     fallbackPlayUrl !== null
       ? await buildFormatsFromPlaywmUrl(fallbackPlayUrl, shareUrl)
       : [];
+  const upgradedFormats = await upgradeTopDouyinFormatToDirectUrl(formats, shareUrl);
 
-  if (formats.length === 0) {
+  if (upgradedFormats.length === 0) {
     throw new ApiError(
       "EXTRACT_FAILED",
       "Douyin mobile share browser video payload could not be extracted.",
@@ -1084,7 +1279,7 @@ async function extractDouyinVideoFromMobileShareBrowser(
     );
   }
 
-  const best = formats[0];
+  const best = upgradedFormats[0];
   const awemeDetail = payload.awemeDetail;
 
   return {
@@ -1101,7 +1296,7 @@ async function extractDouyinVideoFromMobileShareBrowser(
     ],
     video: {
       best,
-      formats,
+      formats: upgradedFormats,
       watermark: best.watermark,
       quality: best.definition,
       durationSeconds: awemeDetail?.video?.duration
@@ -1298,8 +1493,6 @@ async function extractDouyinVideoOnce(
 export async function extractDouyinVideo(
   context: ExtractionContext,
 ): Promise<ExtractSuccessResult> {
-  const diagnostics: string[] = [];
-
   try {
     return await Promise.any([
       extractDouyinVideoFromWebDetailApi(context),
@@ -1309,12 +1502,6 @@ export async function extractDouyinVideo(
     if (!(error instanceof AggregateError)) {
       throw error;
     }
-
-    diagnostics.push(
-      ...error.errors
-        .filter((entry): entry is Error => entry instanceof Error)
-        .map((entry) => entry.message),
-    );
 
     const fatalError = error.errors.find(
       (entry) => entry instanceof Error && !isExtractFailedApiError(entry),
@@ -1328,10 +1515,6 @@ export async function extractDouyinVideo(
   try {
     return await extractDouyinVideoFromMobileShareBrowser(context);
   } catch (error) {
-    if (error instanceof Error) {
-      diagnostics.push(error.message);
-    }
-
     if (!isExtractFailedApiError(error)) {
       throw error;
     }
@@ -1339,14 +1522,10 @@ export async function extractDouyinVideo(
 
   try {
     return await extractDouyinVideoOnce(context);
-  } catch (error) {
-    if (error instanceof Error) {
-      diagnostics.push(error.message);
-    }
-
+  } catch {
     throw new ApiError(
       "EXTRACT_FAILED",
-      diagnostics.join(" | ") || "Douyin video payload could not be extracted.",
+      "Douyin video payload could not be extracted.",
       502,
     );
   }

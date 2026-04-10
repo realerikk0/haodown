@@ -113,6 +113,20 @@
   box-shadow: var(--shadow);
 }
 
+.batchSection,
+.accountSection {
+  margin-top: 28px;
+}
+
+.batchPanel {
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 32px;
+  background: var(--card);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+}
+
 .panelTop {
   display: flex;
   justify-content: space-between;
@@ -140,6 +154,71 @@
   background: rgba(15, 118, 110, 0.12);
   color: var(--accent-strong);
   text-align: right;
+}
+
+.logBadge {
+  flex: none;
+  align-self: start;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.changelogList {
+  display: grid;
+  gap: 12px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.changelogItem {
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: rgba(18, 33, 43, 0.04);
+}
+
+.changelogHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.changelogVersion {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.changelogDate {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.changelogSummary {
+  margin: 10px 0 0;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.changelogDetails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.changelogDetail {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .countNumber {
@@ -248,15 +327,7 @@
   margin-top: 32px;
 }
 
-.viewerStrip {
-  display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
-  gap: 18px;
-  margin-top: 28px;
-}
-
-.viewerCard,
-.tokenCard {
+.accountPanel {
   padding: 22px 24px;
   border-radius: 28px;
   border: 1px solid var(--line);
@@ -265,11 +336,22 @@
   backdrop-filter: blur(14px);
 }
 
-.viewerCard {
-  display: flex;
-  justify-content: space-between;
+.accountPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
   gap: 24px;
-  align-items: center;
+  align-items: start;
+}
+
+.accountMain,
+.accountToken {
+  min-width: 0;
+}
+
+.accountToken {
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: rgba(18, 33, 43, 0.045);
 }
 
 .viewerLabel {
@@ -302,7 +384,8 @@
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  margin-top: 18px;
 }
 
 .viewerStat {
@@ -528,8 +611,25 @@
   background: rgba(18, 33, 43, 0.045);
 }
 
+.mediaPreview {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(18, 33, 43, 0.08);
+}
+
+.mediaThumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .mediaMeta {
   min-width: 0;
+  flex: 1;
 }
 
 .mediaStrong {
@@ -629,7 +729,7 @@
   .hero,
   .resultGrid,
   .summary,
-  .viewerStrip {
+  .accountPanel {
     grid-template-columns: 1fr;
   }
 
@@ -637,12 +737,16 @@
     max-width: 11ch;
   }
 
-  .viewerCard,
   .tokenRow {
     display: grid;
   }
 
   .viewerActions {
     justify-content: start;
+  }
+
+  .changelogHead {
+    align-items: start;
+    flex-direction: column;
   }
 }

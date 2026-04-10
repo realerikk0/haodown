@@ -105,3 +105,10 @@ export interface ViewerState {
   dailyRemaining: number;
   note: string | null;
 }
+
+export interface ReleaseNoteEntry {
+  version: string;
+  date: string;
+  summary: string;
+  details: string[];
+}

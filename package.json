@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "changelog:generate": "node scripts/generate-changelog.mjs",
+    "prebuild": "node scripts/generate-changelog.mjs",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
