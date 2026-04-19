@@ -138,11 +138,17 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
 
       for (const item of items) {
         try {
+          const headers: Record<string, string> = {
+            "content-type": "application/json",
+          };
+
+          if (viewer.apiToken) {
+            headers.authorization = `Bearer ${viewer.apiToken}`;
+          }
+
           const response = await fetch("/api/extract", {
             method: "POST",
-            headers: {
-              "content-type": "application/json",
-            },
+            headers,
             body: JSON.stringify({
               text: item,
               options: {

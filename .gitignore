@@ -10,3 +10,7 @@ dist
 .DS_Store
 supabase/.temp
 supabase/.DS_Store
+iOS/**/.git
+iOS/**/.git/**
+xcuserdata/
+*.xcuserstate

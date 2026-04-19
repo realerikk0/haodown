@@ -67,7 +67,36 @@ export type ErrorCode =
   | "RESOLVE_FAILED"
   | "EXTRACT_FAILED"
   | "BROWSER_TIMEOUT"
-  | "QUOTA_EXCEEDED";
+  | "QUOTA_EXCEEDED"
+  | "UNAUTHORIZED";
+
+export type ShortcutAuthMode = "anonymous-session" | "bearer-token";
+
+export type ShortcutInputSource = "share-sheet" | "clipboard" | "manual";
+
+export interface ShortcutClientMetadata {
+  shortcutVersion?: string;
+  inputSource?: ShortcutInputSource;
+}
+
+export interface ShortcutMetaResult {
+  ok: true;
+  shortcutId: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  installPageUrl: string;
+  sourceSpecUrl: string;
+  supportedHosts: string[];
+  authModes: ShortcutAuthMode[];
+}
+
+export interface ShortcutTokenVerificationResult {
+  ok: true;
+  email: string | null;
+  dailyLimit: number;
+  dailyRemaining: number;
+  creditsBalance: number;
+}
 
 export interface ExtractErrorResult {
   ok: false;

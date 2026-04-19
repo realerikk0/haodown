@@ -201,14 +201,17 @@ export async function recordAnonymousRequestUsage(
     throw toQuotaExceededError("未登录用户每天最多只能解析 2 条内容，请先登录后继续。");
   }
 
-  await insertRequestLog({
-    anonymousSessionId: input.anonymousSessionId,
-    sourceText: input.sourceText,
-    sourceUrl: input.sourceUrl,
-    metadata: input.metadata,
-  });
-
   const nextUsedToday = usedToday + 1;
+
+  if (hasSupabaseAdminAccess()) {
+    await insertRequestLog({
+      anonymousSessionId: input.anonymousSessionId,
+      sourceText: input.sourceText,
+      sourceUrl: input.sourceUrl,
+      metadata: input.metadata,
+    });
+  }
+
   return {
     usedToday: nextUsedToday,
     dailyLimit: ANONYMOUS_REQUEST_LIMIT,

@@ -1,0 +1,104 @@
+{
+  "shortcutId": "haodown-ios",
+  "name": "haodown iOS 下载",
+  "version": "1.0.0",
+  "description": "适配 haodown 服务的 iOS 快捷指令 source spec。首次运行会检查版本、引导录入 Token，并把视频或图集保存到系统相册。",
+  "config": {
+    "filePath": "Shortcuts/haodown/config.json",
+    "defaults": {
+      "shortcutVersion": "1.0.0",
+      "baseUrl": "https://your-domain.example.com",
+      "apiToken": "",
+      "anonymousSessionId": "{UUID}"
+    }
+  },
+  "apis": {
+    "meta": {
+      "method": "GET",
+      "path": "/api/shortcut/meta",
+      "query": {
+        "currentVersion": "{config.shortcutVersion}"
+      }
+    },
+    "verifyToken": {
+      "method": "POST",
+      "path": "/api/shortcut/verify-token",
+      "headers": {
+        "Authorization": "Bearer {candidateToken}"
+      }
+    },
+    "extract": {
+      "method": "POST",
+      "path": "/api/extract",
+      "headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer {config.apiToken}"
+      },
+      "body": {
+        "text": "{resolvedInput}",
+        "anonymousSessionId": "{config.anonymousSessionId}",
+        "options": {
+          "preferUnwatermarked": true,
+          "preferHighestQuality": true
+        },
+        "client": {
+          "shortcutVersion": "{config.shortcutVersion}",
+          "inputSource": "{inputSource}"
+        }
+      }
+    }
+  },
+  "variables": [
+    {
+      "name": "Shortcut Input",
+      "meaning": "分享面板传入的文本或 URL"
+    },
+    {
+      "name": "Clipboard Text",
+      "meaning": "系统剪贴板内容"
+    },
+    {
+      "name": "Resolved Input",
+      "meaning": "最终用于提取第一条 URL 的原始文本"
+    },
+    {
+      "name": "Input Source",
+      "meaning": "share-sheet / clipboard / manual"
+    },
+    {
+      "name": "Config",
+      "meaning": "本地 JSON 配置对象"
+    }
+  ],
+  "mainFlow": [
+    "读取 Shortcuts/haodown/config.json；如果不存在就创建默认配置。",
+    "请求 GET {baseUrl}/api/shortcut/meta?currentVersion={shortcutVersion}。",
+    "若 updateAvailable=true，弹出“继续使用当前版本 / 查看更新”；选择查看更新则打开 installPageUrl。",
+    "如果 config.apiToken 为空，则弹窗输入 Token，并提供“保存并继续 / 跳过，使用匿名模式”。",
+    "输入 Token 后，请求 POST /api/shortcut/verify-token 校验；成功才写回 config.json，失败则提示“重试 / 跳过匿名模式”。",
+    "优先读取 Shortcut Input；没有则读取剪贴板；再没有则要求手动输入文本。",
+    "用正则 https?://[^\\s<>\"'`]+ 提取第一条 URL；提不到就提示“未发现有效分享链接”。",
+    "发起 POST /api/extract；有 Token 时附带 Authorization，没有时删掉 Authorization 并保留 anonymousSessionId。",
+    "如果响应 contentType=video，则下载 video.best.url 并保存到照片。",
+    "如果响应 contentType=gallery，则循环下载 images[].url，并全部保存到照片。",
+    "结束时提示标题、平台、保存数量。"
+  ],
+  "resetTokenFlow": [
+    "读取 config.json。",
+    "把 apiToken 置为空字符串并写回。",
+    "再次弹出输入框，沿用 verify-token 逻辑重新校验并保存。"
+  ],
+  "responseMapping": {
+    "success": {
+      "platform": "platform",
+      "title": "title",
+      "contentType": "contentType",
+      "videoUrl": "video.best.url",
+      "imageUrls": "images[].url"
+    },
+    "error": {
+      "code": "code",
+      "message": "message"
+    }
+  }
+}
