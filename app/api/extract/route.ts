@@ -9,7 +9,11 @@ import {
   parseAnonymousUsageState,
   serializeAnonymousUsageCount,
 } from "@/lib/auth/anonymous";
-import { findProfileByApiToken, readApiTokenFromRequest } from "@/lib/auth/api-token";
+import {
+  findProfileByApiToken,
+  isAdminApiToken,
+  readApiTokenFromRequest,
+} from "@/lib/auth/api-token";
 import { AUTHENTICATED_DAILY_REQUEST_LIMIT } from "@/lib/auth/quota";
 import { ensureProfileForUser } from "@/lib/auth/profile";
 import {
@@ -40,6 +44,9 @@ type ExtractActor =
       kind: "authenticated";
       profileId: string;
       creditsBalance: number | null;
+    }
+  | {
+      kind: "admin";
     }
   | {
       kind: "anonymous";
@@ -104,12 +111,18 @@ export async function POST(request: Request) {
 
     const bearerToken = readApiTokenFromRequest(request);
     if (bearerToken) {
-      const profile = await findProfileByApiToken(bearerToken);
-      actor = {
-        kind: "authenticated",
-        profileId: profile.id,
-        creditsBalance: profile.credits_balance,
-      };
+      if (isAdminApiToken(bearerToken)) {
+        actor = {
+          kind: "admin",
+        };
+      } else {
+        const profile = await findProfileByApiToken(bearerToken);
+        actor = {
+          kind: "authenticated",
+          profileId: profile.id,
+          creditsBalance: profile.credits_balance,
+        };
+      }
     }
 
     if (isSupabaseConfigured()) {
@@ -208,7 +221,7 @@ export async function POST(request: Request) {
           ),
         });
         actor.creditsBalance = usage.creditsBalance;
-      } else {
+      } else if (actor.kind === "anonymous") {
         const usage = await recordAnonymousRequestUsage({
           anonymousSessionId: actor.sessionId,
           sourceText: payload.text,
@@ -249,7 +262,7 @@ export async function POST(request: Request) {
 
     const response = jsonNoStore(result, { status: 200 });
 
-    if (actor.cookieBacked) {
+    if (actor.kind === "anonymous" && actor.cookieBacked) {
       response.cookies.set(
         ANONYMOUS_SESSION_COOKIE,
         actor.sessionId,

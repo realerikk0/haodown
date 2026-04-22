@@ -25,9 +25,19 @@ cp .env.example .env.local
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxx
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+HAODOWN_ADMIN_TOKENS=hd_admin_your-secret-token
 ```
 
 如果暂时不填 Supabase，提取功能仍然可以跑，但登录、token 和数据库记录会自动降级关闭。
+
+`HAODOWN_ADMIN_TOKENS` 是可选项，用来配置管理员级别 token。命中管理员 token 的请求会跳过每日额度和点数扣减，仍然支持两种调用方式：
+
+```bash
+Authorization: Bearer <admin-token>
+https://www.haodown.cc/api/extract?code=<admin-token>
+```
+
+如果需要配置多个管理员 token，可以用英文逗号或换行分隔。
 
 ## Supabase SQL
 

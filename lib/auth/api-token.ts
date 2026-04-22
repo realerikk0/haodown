@@ -7,6 +7,25 @@ type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
 
 const BEARER_PREFIX = /^Bearer\s+(.+)$/i;
 
+function readEnv(name: string) {
+  return process.env[name]?.trim() ?? "";
+}
+
+function getAdminApiTokens() {
+  const tokens = [
+    readEnv("HAODOWN_ADMIN_TOKEN"),
+    ...readEnv("HAODOWN_ADMIN_TOKENS").split(/[,\n]/),
+  ];
+
+  return Array.from(
+    new Set(tokens.map((token) => token.trim()).filter(Boolean)),
+  );
+}
+
+export function isAdminApiToken(token: string) {
+  return getAdminApiTokens().some((adminToken) => adminToken === token);
+}
+
 export function readBearerToken(headerValue?: string | null) {
   if (!headerValue || headerValue.trim().length === 0) {
     return null;

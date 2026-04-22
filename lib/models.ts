@@ -96,6 +96,8 @@ export interface ShortcutTokenVerificationResult {
   dailyLimit: number;
   dailyRemaining: number;
   creditsBalance: number;
+  role?: "admin" | "user";
+  quotaLabel?: string;
 }
 
 export interface ExtractErrorResult {

@@ -4,16 +4,19 @@ import { ApiError } from "@/lib/errors";
 
 const {
   findProfileByApiToken,
+  isAdminApiToken,
   readApiTokenFromRequest,
   getProfileQuotaSnapshot,
 } = vi.hoisted(() => ({
   findProfileByApiToken: vi.fn(),
+  isAdminApiToken: vi.fn(),
   readApiTokenFromRequest: vi.fn(),
   getProfileQuotaSnapshot: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/api-token", () => ({
   findProfileByApiToken,
+  isAdminApiToken,
   readApiTokenFromRequest,
 }));
 
@@ -27,6 +30,7 @@ import type { ShortcutTokenVerificationResult } from "@/lib/models";
 describe("/api/shortcut/verify-token", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isAdminApiToken.mockReturnValue(false);
   });
 
   it("returns quota info for a valid bearer token", async () => {
@@ -82,6 +86,31 @@ describe("/api/shortcut/verify-token", () => {
       ok: false,
       code: "UNAUTHORIZED",
     });
+  });
+
+  it("returns unlimited quota info for an admin token", async () => {
+    readApiTokenFromRequest.mockReturnValue("hd_admin_test");
+    isAdminApiToken.mockReturnValue(true);
+
+    const response = await POST(
+      new Request("https://haodown.test/api/shortcut/verify-token?code=hd_admin_test", {
+        method: "POST",
+      }),
+    );
+    const body = (await response.json()) as ShortcutTokenVerificationResult;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      email: null,
+      dailyLimit: 999999,
+      dailyRemaining: 999999,
+      creditsBalance: 999999,
+      role: "admin",
+      quotaLabel: "管理员无限制",
+    });
+    expect(findProfileByApiToken).not.toHaveBeenCalled();
+    expect(getProfileQuotaSnapshot).not.toHaveBeenCalled();
   });
 
   it("surfaces unauthorized errors from token lookup", async () => {

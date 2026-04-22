@@ -15,6 +15,7 @@ const {
   recordAnonymousRequestUsage,
   recordProfileRequestUsage,
   readApiTokenFromRequest,
+  isAdminApiToken,
 } = vi.hoisted(() => ({
   cookiesMock: vi.fn(),
   countAnonymousRequests: vi.fn(),
@@ -28,6 +29,7 @@ const {
   recordAnonymousRequestUsage: vi.fn(),
   recordProfileRequestUsage: vi.fn(),
   readApiTokenFromRequest: vi.fn(),
+  isAdminApiToken: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({
@@ -36,6 +38,7 @@ vi.mock("next/headers", () => ({
 
 vi.mock("@/lib/auth/api-token", () => ({
   findProfileByApiToken,
+  isAdminApiToken,
   readApiTokenFromRequest,
 }));
 
@@ -170,6 +173,7 @@ describe("/api/extract", () => {
       consumedCredit: false,
     });
     readApiTokenFromRequest.mockReturnValue(null);
+    isAdminApiToken.mockReturnValue(false);
     findProfileByApiToken.mockResolvedValue(null);
   });
 
@@ -216,6 +220,32 @@ describe("/api/extract", () => {
     );
     expect(recordAnonymousRequestUsage).not.toHaveBeenCalled();
     expect(countAnonymousRequests).not.toHaveBeenCalled();
+  });
+
+  it("allows admin token requests without quota checks or usage deduction", async () => {
+    readApiTokenFromRequest.mockReturnValue("hd_admin_test");
+    isAdminApiToken.mockReturnValue(true);
+
+    const response = await POST(
+      new Request("https://haodown.test/api/extract?code=hd_admin_test", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "https://v.douyin.com/test/",
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(findProfileByApiToken).not.toHaveBeenCalled();
+    expect(getProfileQuotaSnapshot).not.toHaveBeenCalled();
+    expect(countAnonymousRequests).not.toHaveBeenCalled();
+    expect(recordProfileRequestUsage).not.toHaveBeenCalled();
+    expect(recordAnonymousRequestUsage).not.toHaveBeenCalled();
   });
 
   it("accepts api token from query param code", async () => {
