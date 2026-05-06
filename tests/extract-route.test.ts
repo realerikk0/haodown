@@ -128,6 +128,42 @@ const successResult = {
   },
 };
 
+const gallerySuccessResult = {
+  ok: true as const,
+  platform: "xiaohongshu" as const,
+  contentType: "gallery" as const,
+  canonicalUrl: "https://www.xiaohongshu.com/discovery/item/test",
+  title: "Test Gallery",
+  id: "gallery-1",
+  capabilities: {
+    supportsShareText: true,
+    supportsDirectUrl: true,
+    contentTypes: ["gallery"],
+    unwatermarkedVideo: "best-effort" as const,
+    multiFormatVideo: false,
+    originalImages: true,
+  },
+  limitations: [],
+  images: [
+    {
+      index: 1,
+      width: 1200,
+      height: 1600,
+      url: "https://cdn.example.com/image-1.jpg",
+      livePhoto: false,
+      motionUrl: null,
+    },
+    {
+      index: 2,
+      width: 1200,
+      height: 1600,
+      url: "https://cdn.example.com/image-2.jpg",
+      livePhoto: true,
+      motionUrl: "https://cdn.example.com/live-2.mp4",
+    },
+  ],
+};
+
 describe("/api/extract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -276,6 +312,38 @@ describe("/api/extract", () => {
       }),
     );
     expect(recordAnonymousRequestUsage).not.toHaveBeenCalled();
+  });
+
+  it("serializes gallery images into plain url arrays", async () => {
+    provider.resolve.mockResolvedValue({
+      platform: "xiaohongshu",
+      originalUrl: "https://xhslink.com/test",
+      canonicalUrl: "https://www.xiaohongshu.com/discovery/item/test",
+      contentType: "gallery",
+      id: "gallery-1",
+      url: new URL("https://www.xiaohongshu.com/discovery/item/test"),
+    });
+    provider.extract.mockResolvedValue(gallerySuccessResult);
+
+    const response = await POST(
+      new Request("https://haodown.test/api/extract", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "https://xhslink.com/test",
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.images).toEqual([
+      "https://cdn.example.com/image-1.jpg",
+      "https://cdn.example.com/image-2.jpg",
+    ]);
+    expect(body.livePhotos).toEqual(["https://cdn.example.com/live-2.mp4"]);
   });
 
   it("uses explicit anonymousSessionId without setting cookies", async () => {

@@ -30,6 +30,7 @@ import { isMissingAuthSessionError } from "@/lib/supabase/auth-errors";
 import { isSupabaseConfigured } from "@/lib/supabase/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type {
+  ExtractApiSuccessResult,
   ExtractOptions,
   ExtractSuccessResult,
   ShortcutClientMetadata,
@@ -88,6 +89,22 @@ function buildUsageMetadata(
       ? { shortcutVersion: client.shortcutVersion }
       : {}),
     ...(client?.inputSource ? { inputSource: client.inputSource } : {}),
+  };
+}
+
+function serializeExtractResult(
+  result: ExtractSuccessResult,
+): ExtractApiSuccessResult {
+  const { images, ...rest } = result;
+  const livePhotos =
+    images
+      ?.map((image) => image.motionUrl)
+      .filter((url): url is string => Boolean(url)) ?? [];
+
+  return {
+    ...rest,
+    ...(images ? { images: images.map((image) => image.url) } : {}),
+    ...(livePhotos.length > 0 ? { livePhotos } : {}),
   };
 }
 
@@ -231,7 +248,7 @@ export async function POST(request: Request) {
         nextAnonymousUsageCount = usage.usedToday;
       }
 
-      const response = jsonNoStore(result, { status: 200 });
+      const response = jsonNoStore(serializeExtractResult(result), { status: 200 });
 
       if (actor.kind === "anonymous" && actor.cookieBacked) {
         response.cookies.set(
@@ -260,7 +277,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const response = jsonNoStore(result, { status: 200 });
+    const response = jsonNoStore(serializeExtractResult(result), { status: 200 });
 
     if (actor.kind === "anonymous" && actor.cookieBacked) {
       response.cookies.set(

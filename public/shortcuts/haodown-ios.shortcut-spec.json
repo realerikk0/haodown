@@ -80,7 +80,7 @@
     "用正则 https?://[^\\s<>\"'`]+ 提取第一条 URL；提不到就提示“未发现有效分享链接”。",
     "发起 POST /api/extract；有 Token 时附带 Authorization，没有时删掉 Authorization 并保留 anonymousSessionId。",
     "如果响应 contentType=video，则下载 video.best.url 并保存到照片。",
-    "如果响应 contentType=gallery，则循环下载 images[].url，并全部保存到照片。",
+    "如果响应 contentType=gallery，则循环下载 images[]，并全部保存到照片。",
     "结束时提示标题、平台、保存数量。"
   ],
   "resetTokenFlow": [
@@ -94,7 +94,7 @@
       "title": "title",
       "contentType": "contentType",
       "videoUrl": "video.best.url",
-      "imageUrls": "images[].url"
+      "imageUrls": "images[]"
     },
     "error": {
       "code": "code",

@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
 
 import type {
+  ExtractApiSuccessResult,
   ExtractErrorResult,
-  ExtractSuccessResult,
   ViewerState,
 } from "@/lib/models";
 import { extractBatchItems } from "@/lib/batch-input";
@@ -18,7 +18,7 @@ type ClientResult =
   | {
       source: string;
       status: "success";
-      payload: ExtractSuccessResult;
+      payload: ExtractApiSuccessResult;
     }
   | {
       source: string;
@@ -46,31 +46,17 @@ function maskToken(token: string) {
   return `${prefix}${hidden}${suffix}`;
 }
 
-function summarizeImages(result: ExtractSuccessResult) {
-  if (!result.images || result.images.length === 0) {
-    return [];
-  }
+function summarizeImages(result: ExtractApiSuccessResult) {
+  const images = result.images ?? [];
 
-  const preview = result.images.slice(0, 3);
-  if (result.images.length > 3) {
-    preview.push({
-      index: result.images.length,
-      width: null,
-      height: null,
-      url: `+${result.images.length - 3} more`,
-    });
-  }
-  return preview;
+  return {
+    preview: images.slice(0, 3),
+    remaining: Math.max(images.length - 3, 0),
+  };
 }
 
-function getLivePhotoImages(result: ExtractSuccessResult) {
-  if (!result.images || result.images.length === 0) {
-    return [];
-  }
-
-  return result.images.filter(
-    (image) => image.livePhoto && typeof image.motionUrl === "string" && image.motionUrl.length > 0,
-  );
+function getLivePhotoImages(result: ExtractApiSuccessResult) {
+  return result.livePhotos ?? [];
 }
 
 function getAccessLabel(viewer: ViewerState) {
@@ -159,7 +145,7 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
           });
 
           const body = (await response.json()) as
-            | ExtractSuccessResult
+            | ExtractApiSuccessResult
             | ExtractErrorResult;
 
           if (!response.ok || !body.ok) {
@@ -171,11 +157,11 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
             continue;
           }
 
-          nextResults.push({
-            source: item,
-            status: "success" as const,
-            payload: body as ExtractSuccessResult,
-          });
+            nextResults.push({
+              source: item,
+              status: "success" as const,
+              payload: body as ExtractApiSuccessResult,
+            });
         } catch (error) {
           nextResults.push({
             source: item,
@@ -570,47 +556,44 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                           图片原图 · {result.payload.images.length}
                         </span>
                         <div className={styles.linkStack}>
-                          {previewImages.map((image) => {
-                            const isMore = image.url.startsWith("+");
-                            return (
-                              <div
-                                className={styles.mediaRow}
-                                key={`${result.payload.id}-${image.index}`}
-                              >
-                                {!isMore ? (
-                                  <div className={styles.mediaPreview}>
-                                    <img
-                                      alt=""
-                                      className={styles.mediaThumb}
-                                      loading="lazy"
-                                      src={image.url}
-                                    />
-                                  </div>
-                                ) : null}
-                                <div className={styles.mediaMeta}>
-                                  <span className={styles.mediaStrong}>
-                                    {isMore
-                                      ? image.url
-                                      : `#${image.index} · ${image.width ?? "?"}×${image.height ?? "?"}`}
-                                  </span>
-                                  <span className={styles.mediaSubtle}>
-                                    {isMore ? "其余图片" : image.url}
-                                  </span>
-                                </div>
-                                {!isMore ? (
-                                  <button
-                                    className={styles.linkButton}
-                                    type="button"
-                                    onClick={() => {
-                                      void copyText(image.url);
-                                    }}
-                                  >
-                                    复制
-                                  </button>
-                                ) : null}
+                          {previewImages.preview.map((imageUrl, index) => (
+                            <div
+                              className={styles.mediaRow}
+                              key={`${result.payload.id}-image-${index + 1}`}
+                            >
+                              <div className={styles.mediaPreview}>
+                                <img
+                                  alt=""
+                                  className={styles.mediaThumb}
+                                  loading="lazy"
+                                  src={imageUrl}
+                                />
                               </div>
-                            );
-                          })}
+                              <div className={styles.mediaMeta}>
+                                <span className={styles.mediaStrong}>#{index + 1}</span>
+                                <span className={styles.mediaSubtle}>{imageUrl}</span>
+                              </div>
+                              <button
+                                className={styles.linkButton}
+                                type="button"
+                                onClick={() => {
+                                  void copyText(imageUrl);
+                                }}
+                              >
+                                复制
+                              </button>
+                            </div>
+                          ))}
+                          {previewImages.remaining > 0 ? (
+                            <div className={styles.mediaRow}>
+                              <div className={styles.mediaMeta}>
+                                <span className={styles.mediaStrong}>
+                                  +{previewImages.remaining} 张未展开
+                                </span>
+                                <span className={styles.mediaSubtle}>其余图片可通过全部复制获取</span>
+                              </div>
+                            </div>
+                          ) : null}
                           <div className={styles.mediaRow}>
                             <div className={styles.mediaMeta}>
                               <span className={styles.mediaStrong}>全部原图链接</span>
@@ -622,11 +605,7 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                               className={styles.linkButton}
                               type="button"
                               onClick={() => {
-                                void copyText(
-                                  result.payload.images!
-                                    .map((image) => image.url)
-                                    .join("\n"),
-                                );
+                                void copyText(result.payload.images!.join("\n"));
                               }}
                             >
                               全部复制
@@ -640,30 +619,22 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                               Live Photo 动图 · {livePhotoImages.length}
                             </span>
                             <div className={styles.linkStack}>
-                              {livePhotoImages.map((image) => (
+                              {livePhotoImages.map((motionUrl, index) => (
                                 <div
                                   className={styles.mediaRow}
-                                  key={`${result.payload.id}-motion-${image.index}`}
+                                  key={`${result.payload.id}-motion-${index + 1}`}
                                 >
-                                  <div className={styles.mediaPreview}>
-                                    <img
-                                      alt=""
-                                      className={styles.mediaThumb}
-                                      loading="lazy"
-                                      src={image.url}
-                                    />
-                                  </div>
                                   <div className={styles.mediaMeta}>
                                     <span className={styles.mediaStrong}>
-                                      #{image.index} 动态资源
+                                      #{index + 1} 动态资源
                                     </span>
-                                    <span className={styles.mediaSubtle}>{image.motionUrl}</span>
+                                    <span className={styles.mediaSubtle}>{motionUrl}</span>
                                   </div>
                                   <button
                                     className={styles.linkButton}
                                     type="button"
                                     onClick={() => {
-                                      void copyText(image.motionUrl!);
+                                      void copyText(motionUrl);
                                     }}
                                   >
                                     复制
@@ -681,12 +652,7 @@ export function BatchExtractor({ viewer }: BatchExtractorProps) {
                                   className={styles.linkButton}
                                   type="button"
                                   onClick={() => {
-                                    void copyText(
-                                      livePhotoImages
-                                        .map((image) => image.motionUrl)
-                                        .filter((url): url is string => Boolean(url))
-                                        .join("\n"),
-                                    );
+                                    void copyText(livePhotoImages.join("\n"));
                                   }}
                                 >
                                   全部复制

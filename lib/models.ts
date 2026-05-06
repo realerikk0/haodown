@@ -61,6 +61,12 @@ export interface ExtractSuccessResult {
   platformMeta?: Record<string, unknown>;
 }
 
+export interface ExtractApiSuccessResult
+  extends Omit<ExtractSuccessResult, "images"> {
+  images?: string[];
+  livePhotos?: string[];
+}
+
 export type ErrorCode =
   | "BAD_REQUEST"
   | "UNSUPPORTED_PLATFORM"

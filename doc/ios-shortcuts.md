@@ -488,7 +488,7 @@ https?://[^\s<>"'`]+
 - `title`
 - `contentType`
 - `video.best.url`
-- `images[].url`
+- `images[]`
 
 ### 8.1 保存视频
 
@@ -511,7 +511,7 @@ https?://[^\s<>"'`]+
    - 命名：`Saved Count`
 3. `重复每一项`
 4. 每次循环里：
-   - 取当前项的 `url`
+   - 当前项本身就是图片 URL
    - `获取 URL 内容`
    - `存储到照片相簿`
    - `将数字增加`
@@ -520,7 +520,7 @@ https?://[^\s<>"'`]+
 
 也就是说：
 
-- 如果图片项里还有 `motionUrl`
+- 如果响应里还有 `livePhotos`
 - 暂时忽略，不做 Live Photo
 
 ## 第 9 步：结束时给一个成功提示
